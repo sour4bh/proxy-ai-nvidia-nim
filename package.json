@@ -1,0 +1,26 @@
+{
+  "name": "proxyai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "hello": "tsx --env-file=.env src/hello.ts",
+    "agent": "tsx --env-file=.env src/agent.ts",
+    "start": "tsx --env-file=.env src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.41",
+    "@hono/node-server": "^2.0.0",
+    "ai": "^6.0.168",
+    "dotenv": "^17.4.2",
+    "hono": "^4.12.15",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
