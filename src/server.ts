@@ -32,6 +32,7 @@ serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => 
     rateCapacity: config.rateCapacity,
     rateWindowMs: config.rateWindowMs,
     maxQueueWaitMs: config.maxQueueWaitMs,
+    upstreamTimeoutMs: config.upstreamTimeoutMs,
     aliases: config.aliases,
   });
 });

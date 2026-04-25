@@ -34,6 +34,7 @@ pnpm exec tsx --env-file=.env src/via-proxy.ts    # AI SDK → local proxy (smok
 - **No retry on upstream 429.** Forward to caller verbatim, set `Retry-After`, set local `pausedUntil` for the next requests in the queue. Caller decides whether to retry.
 - **Mid-stream failure (status 200 then error).** `proxy.ts:wrapStreamWithErrorFrame` emits a synthetic `data: {error...}\n\ndata: [DONE]\n\n` frame and closes. Status code can't be changed mid-stream.
 - **Non-JSON upstream errors are wrapped.** `proxy.ts:ensureOpenAIShape` detects when upstream returns plain text (e.g. NIM's HTML 404 for unknown paths) and wraps it in OpenAI error shape so callers always parse cleanly.
+- **Upstream deadline is separate from queue-wait.** `PROXY_MAX_QUEUE_WAIT_MS` (30s default) bounds how long a request waits for a *local* RPM slot. `PROXY_UPSTREAM_TIMEOUT_MS` (10 min default, generous for slow reasoners like GLM-5.1 or DeepSeek V4) bounds how long the upstream `fetch` itself can take. Combined with `c.req.raw.signal` via `AbortSignal.any`, so client disconnect and proxy timeout both abort the upstream cleanly.
 - **Auth fails fast at boot.** `config.ts` throws if `PROXY_API_KEY` or `NVIDIA_NIM_API_KEY` is unset. The proxy never starts in a half-configured state.
 - **Client `Authorization` header is stripped, not forwarded.** `auth.ts` validates `Bearer PROXY_API_KEY`; `proxy.ts` injects `Bearer NVIDIA_NIM_API_KEY` toward upstream.
 

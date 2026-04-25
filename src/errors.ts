@@ -35,6 +35,12 @@ export const errors = {
     ),
   upstreamUnavailable: (message: string) =>
     openaiError(message, "upstream_error", "upstream_unavailable"),
+  upstreamTimeout: (timeoutMs: number) =>
+    openaiError(
+      `Upstream did not respond within ${timeoutMs}ms.`,
+      "upstream_error",
+      "upstream_timeout",
+    ),
   notImplemented: (path: string) =>
     openaiError(
       `${path} is not supported by this proxy.`,

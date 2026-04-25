@@ -41,5 +41,6 @@ export const config = {
   rateCapacity: int("PROXY_RATE_CAPACITY", 40),
   rateWindowMs: int("PROXY_RATE_WINDOW_MS", 60_000),
   maxQueueWaitMs: int("PROXY_MAX_QUEUE_WAIT_MS", 30_000),
+  upstreamTimeoutMs: int("PROXY_UPSTREAM_TIMEOUT_MS", 600_000),
   aliases: parseAliases(),
 } as const;

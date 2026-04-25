@@ -81,6 +81,8 @@ export async function chatCompletions(c: Context): Promise<Response> {
 
   let upstream: Response;
   const upstreamStart = Date.now();
+  const timeoutSignal = AbortSignal.timeout(config.upstreamTimeoutMs);
+  const fetchSignal = AbortSignal.any([signal, timeoutSignal]);
   try {
     upstream = await fetch(`${config.nimBaseUrl}/chat/completions`, {
       method: "POST",
@@ -90,11 +92,44 @@ export async function chatCompletions(c: Context): Promise<Response> {
         Accept: stream ? "text/event-stream" : "application/json",
       },
       body: JSON.stringify(body),
-      signal,
+      signal: fetchSignal,
     });
   } catch (e) {
     const totalMs = Date.now() - start;
     const upstreamMs = Date.now() - upstreamStart;
+    if (timeoutSignal.aborted) {
+      log({
+        reqId: id,
+        path: "/v1/chat/completions",
+        model: requested,
+        resolvedModel: resolved,
+        status: 504,
+        queueWaitMs,
+        upstreamMs,
+        totalMs,
+        stream,
+        reason: "upstream_timeout",
+      });
+      const r = c.json(errors.upstreamTimeout(config.upstreamTimeoutMs), 504);
+      r.headers.set("x-request-id", id);
+      return r;
+    }
+    if (signal.aborted) {
+      log({
+        reqId: id,
+        path: "/v1/chat/completions",
+        status: 499,
+        queueWaitMs,
+        upstreamMs,
+        totalMs,
+        stream,
+        reason: "client_aborted_upstream",
+      });
+      return new Response(JSON.stringify(errors.clientAborted()), {
+        status: 499,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     log({
       reqId: id,
       path: "/v1/chat/completions",
