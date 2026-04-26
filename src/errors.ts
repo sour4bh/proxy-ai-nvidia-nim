@@ -17,8 +17,6 @@ export function openaiError(
 }
 
 export const errors = {
-  invalidApiKey: () =>
-    openaiError("Invalid API key.", "invalid_request_error", "invalid_api_key"),
   invalidRequest: (message: string, param?: string) =>
     openaiError(message, "invalid_request_error", "invalid_request", param ?? null),
   queueTimeout: (waitedMs: number) =>

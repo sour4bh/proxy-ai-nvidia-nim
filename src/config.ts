@@ -33,7 +33,6 @@ function parseAliases(): Record<string, string> {
 }
 
 export const config = {
-  proxyApiKey: required("PROXY_API_KEY"),
   nimApiKey: required("NVIDIA_NIM_API_KEY"),
   nimBaseUrl: "https://integrate.api.nvidia.com/v1",
   host: process.env.PROXY_HOST ?? "127.0.0.1",
