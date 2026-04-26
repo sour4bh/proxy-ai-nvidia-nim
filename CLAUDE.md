@@ -25,7 +25,7 @@ pnpm exec tsx --env-file=.env src/via-proxy.ts    # AI SDK → local proxy (smok
 ### Two distinct surfaces in `src/`
 
 1. **Smoke tests** — `nim.ts`, `hello.ts`, `agent.ts`, `via-proxy.ts`. Use the AI SDK (`@ai-sdk/openai-compatible` + `ai`). These are isolated examples; they are NOT imported by the proxy.
-2. **Proxy** — `server.ts`, `proxy.ts`, `limiter.ts`, `models.ts`, `auth.ts`, `aliases.ts`, `config.ts`, `errors.ts`, `log.ts`. Hono on `@hono/node-server`. The AI SDK is intentionally absent here.
+2. **Proxy** — `server.ts`, `proxy.ts`, `anthropic.ts`, `limiter.ts`, `models.ts`, `aliases.ts`, `config.ts`, `errors.ts`, `log.ts`. Hono on `@hono/node-server`. The AI SDK is intentionally absent here.
 
 ### Proxy invariants (load-bearing — read before changing)
 
@@ -35,8 +35,7 @@ pnpm exec tsx --env-file=.env src/via-proxy.ts    # AI SDK → local proxy (smok
 - **Mid-stream failure (status 200 then error).** `proxy.ts:wrapStreamWithErrorFrame` emits a synthetic `data: {error...}\n\ndata: [DONE]\n\n` frame and closes. Status code can't be changed mid-stream.
 - **Non-JSON upstream errors are wrapped.** `proxy.ts:ensureOpenAIShape` detects when upstream returns plain text (e.g. NIM's HTML 404 for unknown paths) and wraps it in OpenAI error shape so callers always parse cleanly.
 - **Upstream deadline is separate from queue-wait.** `PROXY_MAX_QUEUE_WAIT_MS` (30s default) bounds how long a request waits for a *local* RPM slot. `PROXY_UPSTREAM_TIMEOUT_MS` (10 min default, generous for slow reasoners like GLM-5.1 or DeepSeek V4) bounds how long the upstream `fetch` itself can take. Combined with `c.req.raw.signal` via `AbortSignal.any`, so client disconnect and proxy timeout both abort the upstream cleanly.
-- **Auth fails fast at boot.** `config.ts` throws if `PROXY_API_KEY` or `NVIDIA_NIM_API_KEY` is unset. The proxy never starts in a half-configured state.
-- **Client `Authorization` header is stripped, not forwarded.** `auth.ts` validates `Bearer PROXY_API_KEY`; `proxy.ts` injects `Bearer NVIDIA_NIM_API_KEY` toward upstream.
+- **No client auth.** The proxy is intended for Tailscale-only or localhost binds; Tailscale ACLs are the boundary. Any client `Authorization` header is overwritten — `proxy.ts` always injects `Bearer NVIDIA_NIM_API_KEY` toward upstream. `config.ts` throws at boot only if `NVIDIA_NIM_API_KEY` is unset. (`PROXY_API_KEY` may exist in `.env` for legacy reasons but is not read.)
 
 ### Limiter design (`limiter.ts`)
 
@@ -56,9 +55,31 @@ Aliases are pure resolution — `body.model = aliases[body.model] ?? body.model`
 
 Hono's typed JSON helper rejects 499. The client-aborted-in-queue path uses `new Response(JSON.stringify(...), {status: 499})` directly. Don't try to "fix" this with `c.json` — it'll fail typecheck.
 
+### Anthropic Messages API (`anthropic.ts`)
+
+`POST /v1/messages` translates the Anthropic Messages API into an OpenAI Chat Completions request toward NIM and translates the response back. Reuses the shared `limiter` from `proxy.ts` — both surfaces share the same 40 RPM budget.
+
+Translation covers:
+- **Messages**: `tool_result` content blocks → `role: "tool"` messages; `tool_use` blocks → `tool_calls`; `system` string or block array → system message prepended.
+- **Tools**: `input_schema` → `parameters`; wrapped in `{type: "function"}`.
+- **Tool choice**: `"any"` → `"required"`, `{type: "tool"}` → `{type: "function"}`.
+- **Streaming**: OpenAI delta chunks → Anthropic SSE event sequence (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Tool call argument deltas → `input_json_delta`.
+- **Stop reasons**: `"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`, `"length"` → `"max_tokens"`.
+- **Errors**: returned in Anthropic error shape `{type: "error", error: {type, message}}` rather than OpenAI shape.
+
+**Claude Code usage (session-scoped):**
+```bash
+ANTHROPIC_BASE_URL=http://100.73.92.10:3000 ANTHROPIC_API_KEY=unused claude
+```
+Aliases must map the claude model name to a NIM model (CLI flags, not env):
+```bash
+pnpm start --alias claude-sonnet-4-6=meta/llama-3.3-70b-instruct \
+           --alias claude-opus-4-7=meta/llama-3.3-70b-instruct \
+           --alias claude-haiku-4-5-20251001=meta/llama-3.1-8b-instruct
+```
+
 ### Out of scope (intentional)
 
-- **Claude Code is NOT a supported client.** It speaks the Anthropic Messages API, not OpenAI Chat Completions. Different protocol; would need a translation layer.
 - **No multi-provider failover, no Redis, no metrics stack, no Docker, no auth providers, no DB.** Single-process, in-memory state only.
 
 ## Convention notes

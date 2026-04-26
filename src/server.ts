@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { config } from "./config.ts";
-import { requireApiKey } from "./auth.ts";
 import { chatCompletions, limiter } from "./proxy.ts";
+import { messages } from "./anthropic.ts";
 import { listModels, loadUpstreamModels } from "./models.ts";
 import { errors } from "./errors.ts";
 import { log } from "./log.ts";
@@ -13,10 +13,9 @@ app.get("/health", (c) =>
   c.json({ ok: true, queueDepth: limiter.queueDepth, inUse: limiter.inUse }),
 );
 
-app.use("/v1/*", requireApiKey);
-
 app.get("/v1/models", listModels);
 app.post("/v1/chat/completions", chatCompletions);
+app.post("/v1/messages", messages);
 app.post("/v1/embeddings", (c) => c.json(errors.notImplemented("/v1/embeddings"), 501));
 app.post("/v1/completions", (c) => c.json(errors.notImplemented("/v1/completions"), 501));
 
