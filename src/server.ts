@@ -32,11 +32,18 @@ const probeController = new ProbeController({
       onResume: handlers.onResume,
     }),
   traffic: () => traffic.snapshot(),
+  rateLimit: () => limiter.snapshot(),
   log,
 });
 
 app.get("/health", (c) =>
-  c.json({ ok: true, queueDepth: limiter.queueDepth, inUse: limiter.inUse, traffic: traffic.snapshot() }),
+  c.json({
+    ok: true,
+    queueDepth: limiter.queueDepth,
+    inUse: limiter.inUse,
+    rateLimit: limiter.snapshot(),
+    traffic: traffic.snapshot(),
+  }),
 );
 
 mountProbeRoutes(app, probeController);

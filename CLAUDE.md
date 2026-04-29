@@ -45,6 +45,7 @@ Custom rolling-window token bucket — `bottleneck`, `p-queue`, and AI SDK helpe
 - Capacity 40 / 60s rolling, FIFO queue, `MAX_QUEUE_WAIT_MS=30s` per request.
 - Client disconnect (via `AbortSignal` from `c.req.raw.signal`) removes queued waiters without burning a slot.
 - One `setTimeout` wake-loop drains the queue on the next available slot or after `pausedUntil`.
+- `limiter.snapshot()` is the read-only contract for live temporal rate-limit usage in `/health` and `/probe`: it reports current rolling-window entries, remaining slots, queue depth, upstream pause timing, and next-slot timing.
 
 ### Aliases (`aliases.ts`, `config.ts`)
 
@@ -70,7 +71,7 @@ Translation covers:
 
 ### Probe dashboard (`probe/`)
 
-`GET /probe` serves the zero-build browser dashboard. `GET /probe/state` returns scheduler state, the active run, latest run, retained history summaries, and probe config. `POST /probe/run` starts a manual run and returns 409 if another run is active.
+`GET /probe` serves the zero-build browser dashboard. `GET /probe/state` returns scheduler state, the active run, latest run, retained history summaries, live rate-limit usage, and probe config. `POST /probe/run` starts a manual run and returns 409 if another run is active.
 
 The scheduler starts after server boot, runs once shortly after boot, then every `PROBE_INTERVAL_MS` (default 6 hours). Results are file-backed under `PROBE_HISTORY_DIR` (default `.probe-history`) with `latest.json` plus the last `PROBE_HISTORY_LIMIT` run files (default 30). `.probe-history/` is gitignored.
 

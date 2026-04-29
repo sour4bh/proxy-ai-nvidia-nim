@@ -21,6 +21,32 @@ type Waiter = {
   abortHandler: () => void;
 };
 
+export type LimiterWindowEntry = {
+  admittedAt: string;
+  expiresAt: string;
+  ageMs: number;
+  remainingMs: number;
+};
+
+export type LimiterSnapshot = {
+  sampledAt: string;
+  capacity: number;
+  windowMs: number;
+  maxQueueWaitMs: number;
+  inUse: number;
+  remaining: number;
+  queueDepth: number;
+  usageRatio: number;
+  pausedUntil: string | null;
+  pauseRemainingMs: number | null;
+  oldestAdmittedAt: string | null;
+  newestAdmittedAt: string | null;
+  nextAvailableAt: string | null;
+  nextAvailableInMs: number | null;
+  resetAt: string | null;
+  window: LimiterWindowEntry[];
+};
+
 export class Limiter {
   private timestamps: number[] = [];
   private queue: Waiter[] = [];
@@ -40,6 +66,42 @@ export class Limiter {
   get inUse(): number {
     this.prune();
     return this.timestamps.length;
+  }
+
+  snapshot(now = Date.now()): LimiterSnapshot {
+    this.prune(now);
+    const window = this.timestamps.map((admittedAt) => {
+      const expiresAt = admittedAt + this.windowMs;
+      return {
+        admittedAt: new Date(admittedAt).toISOString(),
+        expiresAt: new Date(expiresAt).toISOString(),
+        ageMs: Math.max(0, now - admittedAt),
+        remainingMs: Math.max(0, expiresAt - now),
+      };
+    });
+    const atCapacity = this.capacity <= 0 || this.timestamps.length >= this.capacity;
+    const nextByCapacity = atCapacity && this.timestamps[0] ? this.timestamps[0] + this.windowMs : now;
+    const nextAvailableMs = Math.max(now, this.pausedUntil, nextByCapacity);
+    const blocked = nextAvailableMs > now || atCapacity;
+
+    return {
+      sampledAt: new Date(now).toISOString(),
+      capacity: this.capacity,
+      windowMs: this.windowMs,
+      maxQueueWaitMs: this.maxQueueWaitMs,
+      inUse: this.timestamps.length,
+      remaining: Math.max(0, this.capacity - this.timestamps.length),
+      queueDepth: this.queue.length,
+      usageRatio: this.capacity > 0 ? this.timestamps.length / this.capacity : 0,
+      pausedUntil: this.pausedUntil > now ? new Date(this.pausedUntil).toISOString() : null,
+      pauseRemainingMs: this.pausedUntil > now ? this.pausedUntil - now : null,
+      oldestAdmittedAt: this.timestamps[0] ? new Date(this.timestamps[0]).toISOString() : null,
+      newestAdmittedAt: this.timestamps.at(-1) ? new Date(this.timestamps.at(-1)!).toISOString() : null,
+      nextAvailableAt: blocked ? new Date(nextAvailableMs).toISOString() : new Date(now).toISOString(),
+      nextAvailableInMs: blocked ? nextAvailableMs - now : 0,
+      resetAt: this.timestamps.at(-1) ? new Date(this.timestamps.at(-1)! + this.windowMs).toISOString() : null,
+      window,
+    };
   }
 
   acquire(signal: AbortSignal): Promise<void> {
@@ -87,8 +149,8 @@ export class Limiter {
     this.scheduleWake();
   }
 
-  private prune(): void {
-    const cutoff = Date.now() - this.windowMs;
+  private prune(now = Date.now()): void {
+    const cutoff = now - this.windowMs;
     while (this.timestamps.length > 0 && this.timestamps[0]! < cutoff) {
       this.timestamps.shift();
     }

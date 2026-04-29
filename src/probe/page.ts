@@ -117,6 +117,61 @@ export function probePage(): string {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .rate-panel {
+      margin-top: 16px;
+    }
+    .rate-stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .rate-stat-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .rate-stat-value {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 750;
+      line-height: 1.1;
+    }
+    .rate-stat-note {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rate-window {
+      display: grid;
+      grid-template-columns: repeat(24, minmax(0, 1fr));
+      gap: 4px;
+      height: 74px;
+      align-items: end;
+      padding-top: 12px;
+    }
+    .rate-bar {
+      min-height: 3px;
+      border-radius: 4px 4px 2px 2px;
+      background: var(--accent);
+    }
+    .rate-bar.empty {
+      background: var(--border);
+      opacity: 0.55;
+    }
+    .rate-axis {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
     section {
       margin-top: 16px;
     }
@@ -184,6 +239,7 @@ export function probePage(): string {
     }
     @media (max-width: 860px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .rate-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .split { grid-template-columns: 1fr; }
       .top { align-items: flex-start; flex-direction: column; padding: 16px 0; }
       button { width: 100%; }
@@ -202,6 +258,15 @@ export function probePage(): string {
   </header>
   <main class="wrap">
     <div class="grid" id="metrics"></div>
+    <section class="panel rate-panel">
+      <div class="section-head">
+        <h2>Rate Limit</h2>
+        <span class="muted" id="rateMeta"></span>
+      </div>
+      <div class="rate-stats" id="rateStats"></div>
+      <div class="rate-window" id="rateWindow" aria-label="Rolling rate limit window"></div>
+      <div class="rate-axis"><span id="rateOldest">window</span><span>now</span></div>
+    </section>
     <section class="split">
       <div class="panel">
         <div class="section-head">
@@ -247,6 +312,10 @@ export function probePage(): string {
     const resultsBody = document.getElementById("resultsBody");
     const fastestBody = document.getElementById("fastestBody");
     const historyBody = document.getElementById("historyBody");
+    const rateMeta = document.getElementById("rateMeta");
+    const rateStats = document.getElementById("rateStats");
+    const rateWindow = document.getElementById("rateWindow");
+    const rateOldest = document.getElementById("rateOldest");
 
     function esc(value) {
       return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -260,12 +329,68 @@ export function probePage(): string {
       return typeof value === "number" ? value + "ms" : "-";
     }
 
+    function fmtDuration(value) {
+      if (typeof value !== "number") return "-";
+      if (value <= 0) return "now";
+      if (value < 1000) return value + "ms";
+      const seconds = Math.ceil(value / 1000);
+      if (seconds < 60) return seconds + "s";
+      const minutes = Math.floor(seconds / 60);
+      const rest = seconds % 60;
+      return rest ? minutes + "m " + rest + "s" : minutes + "m";
+    }
+
+    function fmtPct(value) {
+      return typeof value === "number" ? Math.round(value * 100) + "%" : "-";
+    }
+
     function metric(label, value, note) {
       return '<div class="panel"><div class="metric-label">' + esc(label) + '</div><div class="metric-value">' + esc(value) + '</div><div class="metric-note">' + esc(note) + '</div></div>';
     }
 
+    function rateStat(label, value, note) {
+      return '<div><div class="rate-stat-label">' + esc(label) + '</div><div class="rate-stat-value">' + esc(value) + '</div><div class="rate-stat-note">' + esc(note) + '</div></div>';
+    }
+
     function row(result) {
       return '<tr><td>' + esc(result.id) + '</td><td><span class="status ' + esc(result.category) + '"><span class="dot"></span>' + esc(result.category) + '</span></td><td>' + esc(result.status) + '</td><td>' + esc(fmtMs(result.ms)) + '</td><td class="muted">' + esc(result.note) + '</td></tr>';
+    }
+
+    function renderRate(rate) {
+      if (!rate) {
+        rateMeta.textContent = "";
+        rateStats.innerHTML = "";
+        rateWindow.innerHTML = "";
+        return;
+      }
+
+      const paused = typeof rate.pauseRemainingMs === "number";
+      rateMeta.textContent = paused
+        ? "Paused " + fmtDuration(rate.pauseRemainingMs)
+        : "Rolling " + fmtDuration(rate.windowMs);
+      rateStats.innerHTML = [
+        rateStat("Used", rate.inUse + "/" + rate.capacity, fmtPct(rate.usageRatio) + " window"),
+        rateStat("Remaining", rate.remaining, "slots available"),
+        rateStat("Queue", rate.queueDepth, "waiting locally"),
+        rateStat("Next Slot", fmtDuration(rate.nextAvailableInMs), rate.nextAvailableAt ? fmtTime(rate.nextAvailableAt) : "-"),
+        rateStat("Reset", rate.resetAt ? fmtTime(rate.resetAt) : "-", "newest slot expires")
+      ].join("");
+
+      const bucketCount = 24;
+      const bucketMs = rate.windowMs / bucketCount;
+      const buckets = Array.from({ length: bucketCount }, () => 0);
+      for (const entry of rate.window || []) {
+        const ageMs = typeof entry.ageMs === "number" ? entry.ageMs : 0;
+        const index = Math.min(bucketCount - 1, Math.floor(ageMs / bucketMs));
+        buckets[bucketCount - 1 - index] += 1;
+      }
+      const max = Math.max(1, ...buckets);
+      rateWindow.innerHTML = buckets.map((count) => {
+        const height = count === 0 ? 3 : Math.max(8, Math.round((count / max) * 64));
+        const title = count + " admitted request" + (count === 1 ? "" : "s");
+        return '<div class="rate-bar ' + (count ? "" : "empty") + '" style="height:' + height + 'px" title="' + esc(title) + '"></div>';
+      }).join("");
+      rateOldest.textContent = fmtDuration(rate.windowMs) + " ago";
     }
 
     function render(state) {
@@ -285,6 +410,7 @@ export function probePage(): string {
         metric("Skipped", counts.skipped, "local limiter/backpressure"),
         metric("Clients", state.traffic?.activeClients ?? 0, state.pause ? "probe paused" : "quiet " + fmtMs(state.traffic?.quietForMs))
       ].join("");
+      renderRate(state.rateLimit);
       latestMeta.textContent = run ? (run.status + " - " + run.source + " - " + fmtTime(run.startedAt)) : "";
       const results = [...(run?.results || [])].sort((a, b) => {
         const rank = { error: 0, timeout: 1, rate_limited: 2, skipped: 3, alive: 4 };
@@ -304,6 +430,12 @@ export function probePage(): string {
       render(await res.json());
     }
 
+    async function loadRate() {
+      const res = await fetch("/health");
+      const live = await res.json();
+      renderRate(live.rateLimit);
+    }
+
     runBtn.addEventListener("click", async () => {
       runBtn.disabled = true;
       await fetch("/probe/run", { method: "POST" });
@@ -312,6 +444,7 @@ export function probePage(): string {
 
     load().catch((err) => { statusLine.textContent = err.message; });
     setInterval(() => load().catch(() => {}), 5000);
+    setInterval(() => loadRate().catch(() => {}), 1000);
   </script>
 </body>
 </html>`;

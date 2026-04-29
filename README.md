@@ -194,9 +194,9 @@ Unknown model names pass through unchanged.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/health` | Returns limiter state plus the live client traffic snapshot. |
+| `GET` | `/health` | Returns limiter state, rolling-window usage, and live client traffic. |
 | `GET` | `/probe` | Browser dashboard for scheduled and manual probes. |
-| `GET` | `/probe/state` | JSON scheduler state, active run, latest run, history, and probe config. |
+| `GET` | `/probe/state` | JSON scheduler state, active run, latest run, history, rate-limit usage, and probe config. |
 | `POST` | `/probe/run` | Starts a manual probe, or returns 409 if another probe is active. |
 | `GET` | `/v1/models` | Returns alias model entries plus cached upstream NIM models. |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible Chat Completions proxy. |
@@ -353,6 +353,13 @@ The limiter keeps four pieces of in-memory state:
 - `pausedUntil`: local pause set after upstream 429 responses.
 - `wakeTimer`: one timer that drains the queue when capacity becomes available.
 
+`limiter.snapshot()` exposes this state as a read-only temporal view for
+`/health` and the probe dashboard: capacity, window length, admitted request
+timestamps inside the current rolling window, remaining slots, queue depth,
+pause timing, and next-slot timing. The dashboard polls `/health` every second
+for the small live rate-limit view and polls `/probe/state` separately for the
+larger probe result payload.
+
 Flow:
 
 ```text
@@ -456,8 +463,9 @@ scheduled or manual probe
 
 The dashboard lives at `/probe`. It polls `/probe/state`, shows the active run
 or latest run, summarizes counts by category, lists failed/slow/rate-limited
-models, and shows retained history. The Run Now button calls `POST /probe/run`;
-if a probe is already active, the route returns 409 with the current run.
+models, shows retained history, and renders live rolling-window rate-limit
+usage from `/health`. The Run Now button calls `POST /probe/run`; if a probe is
+already active, the route returns 409 with the current run.
 
 Probe run JSON uses this shape:
 
