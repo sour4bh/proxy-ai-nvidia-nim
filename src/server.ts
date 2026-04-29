@@ -9,8 +9,10 @@ import { log } from "./log.ts";
 import { ProbeHistory } from "./probe/history.ts";
 import { ProbeController } from "./probe/controller.ts";
 import { mountProbeRoutes } from "./probe/routes.ts";
+import { TrafficMonitor } from "./traffic.ts";
 
 const app = new Hono();
+const traffic = new TrafficMonitor();
 const probeHistory = new ProbeHistory(config.probeHistoryDir, config.probeHistoryLimit);
 const probeController = new ProbeController({
   history: probeHistory,
@@ -21,19 +23,27 @@ const probeController = new ProbeController({
   intervalMs: config.probeIntervalMs,
   historyLimit: config.probeHistoryLimit,
   historyDir: config.probeHistoryDir,
+  clientQuietMs: config.probeClientQuietMs,
   acquire: limiter.acquire.bind(limiter),
+  waitForClientQuiet: (handlers) =>
+    traffic.waitForQuiet({
+      quietMs: config.probeClientQuietMs,
+      onPause: handlers.onPause,
+      onResume: handlers.onResume,
+    }),
+  traffic: () => traffic.snapshot(),
   log,
 });
 
 app.get("/health", (c) =>
-  c.json({ ok: true, queueDepth: limiter.queueDepth, inUse: limiter.inUse }),
+  c.json({ ok: true, queueDepth: limiter.queueDepth, inUse: limiter.inUse, traffic: traffic.snapshot() }),
 );
 
 mountProbeRoutes(app, probeController);
 
 app.get("/v1/models", listModels);
-app.post("/v1/chat/completions", chatCompletions);
-app.post("/v1/messages", messages);
+app.post("/v1/chat/completions", (c) => traffic.track(() => chatCompletions(c)));
+app.post("/v1/messages", (c) => traffic.track(() => messages(c)));
 app.post("/v1/embeddings", (c) => c.json(errors.notImplemented("/v1/embeddings"), 501));
 app.post("/v1/completions", (c) => c.json(errors.notImplemented("/v1/completions"), 501));
 

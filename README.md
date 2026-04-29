@@ -173,6 +173,7 @@ Runtime configuration is owned by `src/config.ts`.
 | `PROBE_INTERVAL_MS` | No | `21600000` | Scheduled dashboard probe interval. |
 | `PROBE_HISTORY_LIMIT` | No | `30` | Retained probe run count. |
 | `PROBE_HISTORY_DIR` | No | `.probe-history` | File-backed probe history directory. |
+| `PROBE_CLIENT_QUIET_MS` | No | `30000` | Quiet window after client traffic before dashboard probes resume. |
 
 The NIM base URL is currently fixed in code:
 
@@ -193,7 +194,7 @@ Unknown model names pass through unchanged.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/health` | Returns `{ ok, queueDepth, inUse }`. |
+| `GET` | `/health` | Returns limiter state plus the live client traffic snapshot. |
 | `GET` | `/probe` | Browser dashboard for scheduled and manual probes. |
 | `GET` | `/probe/state` | JSON scheduler state, active run, latest run, history, and probe config. |
 | `POST` | `/probe/run` | Starts a manual probe, or returns 409 if another probe is active. |
@@ -241,6 +242,7 @@ tsx --env-file=.env src/server.ts
   |
   +--> src/config.ts parses env and CLI aliases
   +--> src/proxy.ts creates the shared limiter
+  +--> src/traffic.ts tracks live proxy client activity
   +--> src/models.ts loads upstream models once
   +--> src/probe/controller.ts schedules probe runs after boot
   +--> Hono serves routes on PROXY_HOST:PROXY_PORT
@@ -254,6 +256,10 @@ server still boots.
 The probe scheduler starts from the server listen callback. It runs once shortly
 after boot and then every `PROBE_INTERVAL_MS`. Results are written under
 `PROBE_HISTORY_DIR` and bounded by `PROBE_HISTORY_LIMIT`.
+
+`src/traffic.ts` watches real proxy traffic on `/v1/chat/completions` and
+`/v1/messages`. It counts a client as active until the response body is fully
+consumed, so long streaming responses keep background probes paused.
 
 ### OpenAI Chat Completions Pipeline
 
@@ -440,6 +446,7 @@ scheduled or manual probe
   +--> fetch NIM /models
   +--> filter likely non-chat models
   +--> for each chat candidate:
+          wait until no live clients and PROBE_CLIENT_QUIET_MS has elapsed
           acquire shared limiter slot
           POST NIM /chat/completions with max_tokens=1024
           classify alive, timeout, rate_limited, error, or skipped
@@ -466,6 +473,7 @@ type ProbeRun = {
     timeoutMs: number;
     concurrency: number;
     maxTokens: number;
+    clientQuietMs: number;
     modelCount: number;
     skippedModelCount: number;
   };
@@ -474,8 +482,12 @@ type ProbeRun = {
 };
 ```
 
-Dashboard probes use the same shared limiter as `/v1/chat/completions` and
-`/v1/messages`, so model-health traffic does not bypass the upstream NIM budget.
+Dashboard probes are background traffic. Before each model probe, the server
+waits until no proxy clients are active and the most recent client activity is
+older than `PROBE_CLIENT_QUIET_MS`; if a client starts using the proxy mid-run,
+the next model probe pauses again. Once quiet, dashboard probes still acquire
+the same shared limiter as `/v1/chat/completions` and `/v1/messages`, so
+model-health traffic does not bypass the upstream NIM budget.
 
 ## Client Examples
 

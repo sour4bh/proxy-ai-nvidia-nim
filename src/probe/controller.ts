@@ -1,6 +1,7 @@
 import { ProbeHistory } from "./history.ts";
 import { PROBE_MAX_TOKENS, runProbe, type ProbeRunnerOptions } from "./run.ts";
-import { countResults, emptyCounts, type ProbeRun, type ProbeRunSource } from "./types.ts";
+import { countResults, emptyCounts, type ProbeRun, type ProbeRunSource, type ProbeRunSummary } from "./types.ts";
+import type { ProbePauseState, TrafficSnapshot } from "../traffic.ts";
 
 type Runner = (options: ProbeRunnerOptions) => Promise<ProbeRun>;
 
@@ -13,15 +14,44 @@ type ProbeControllerOptions = {
   intervalMs: number;
   historyLimit: number;
   historyDir: string;
+  clientQuietMs: number;
   acquire?: (signal: AbortSignal) => Promise<void>;
+  waitForClientQuiet?: (handlers: {
+    onPause: (state: ProbePauseState) => void;
+    onResume: () => void;
+  }) => Promise<void>;
+  traffic?: () => TrafficSnapshot;
   runner?: Runner;
   log?: (record: Record<string, unknown>) => void;
+};
+
+export type ProbeState = {
+  status: "running" | "idle";
+  activeRun: ProbeRun | null;
+  pause: ProbePauseState | null;
+  latest: ProbeRun | null;
+  history: ProbeRunSummary[];
+  traffic: TrafficSnapshot | null;
+  scheduler: {
+    enabled: boolean;
+    intervalMs: number;
+    nextRunAt: string | null;
+  };
+  config: {
+    timeoutMs: number;
+    concurrency: number;
+    maxTokens: number;
+    clientQuietMs: number;
+    historyLimit: number;
+    historyDir: string;
+  };
 };
 
 export class ProbeController {
   private activeRun: ProbeRun | null = null;
   private timer: NodeJS.Timeout | null = null;
   private nextRunAt: string | null = null;
+  private pause: ProbePauseState | null = null;
   private started = false;
   private runner: Runner;
 
@@ -47,7 +77,7 @@ export class ProbeController {
     return { accepted: true, run: this.startRun("manual") };
   }
 
-  async state(): Promise<Record<string, unknown>> {
+  async state(): Promise<ProbeState> {
     const [latest, history] = await Promise.all([
       this.options.history.latest(),
       this.options.history.summaries(),
@@ -55,8 +85,10 @@ export class ProbeController {
     return {
       status: this.activeRun ? "running" : "idle",
       activeRun: this.activeRun,
+      pause: this.pause,
       latest,
       history,
+      traffic: this.options.traffic?.() ?? null,
       scheduler: {
         enabled: this.started,
         intervalMs: this.options.intervalMs,
@@ -66,6 +98,7 @@ export class ProbeController {
         timeoutMs: this.options.timeoutMs,
         concurrency: this.options.concurrency,
         maxTokens: PROBE_MAX_TOKENS,
+        clientQuietMs: this.options.clientQuietMs,
         historyLimit: this.options.historyLimit,
         historyDir: this.options.historyDir,
       },
@@ -98,6 +131,7 @@ export class ProbeController {
         timeoutMs: this.options.timeoutMs,
         concurrency: this.options.concurrency,
         maxTokens: PROBE_MAX_TOKENS,
+        clientQuietMs: this.options.clientQuietMs,
         modelCount: 0,
         skippedModelCount: 0,
       },
@@ -115,7 +149,24 @@ export class ProbeController {
       timeoutMs: this.options.timeoutMs,
       concurrency: this.options.concurrency,
       maxTokens: PROBE_MAX_TOKENS,
+      clientQuietMs: this.options.clientQuietMs,
       acquire: this.options.acquire,
+      beforeProbe: async () => {
+        await this.options.waitForClientQuiet?.({
+          onPause: (state) => {
+            if (!this.pause) {
+              this.options.log?.({ event: "probe_paused_for_client_traffic", id, source, reason: state.reason });
+            }
+            this.pause = state;
+          },
+          onResume: () => {
+            if (this.pause) {
+              this.options.log?.({ event: "probe_resumed_after_client_quiet", id, source });
+            }
+            this.pause = null;
+          },
+        });
+      },
       onConfig: (config) => {
         active.config = config;
       },
@@ -129,10 +180,12 @@ export class ProbeController {
           await this.options.history.write(run);
           this.options.log?.({ event: "probe_run_finished", id: run.id, source, status: run.status, counts: run.counts });
         } finally {
+          this.pause = null;
           this.activeRun = null;
         }
       })
       .catch((e) => {
+        this.pause = null;
         this.activeRun = null;
         this.options.log?.({ event: "probe_run_error", source, error: (e as Error).message });
       });

@@ -15,7 +15,7 @@ function run(id: number): ProbeRun {
     startedAt,
     finishedAt: startedAt,
     durationMs: 10,
-    config: { timeoutMs: 1000, concurrency: 1, maxTokens: 1024, modelCount: 1, skippedModelCount: 0 },
+    config: { timeoutMs: 1000, concurrency: 1, maxTokens: 1024, clientQuietMs: 0, modelCount: 1, skippedModelCount: 0 },
     counts: { ...emptyCounts(), alive: 1 },
     results: [{ id: "model", status: 200, ms: id, note: "ok", category: "alive" }],
   };

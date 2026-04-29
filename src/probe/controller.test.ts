@@ -23,7 +23,7 @@ function completedRun(id: string): ProbeRun {
     startedAt: "2026-01-01T00:00:00.000Z",
     finishedAt: "2026-01-01T00:00:01.000Z",
     durationMs: 1000,
-    config: { timeoutMs: 1000, concurrency: 1, maxTokens: 1024, modelCount: 0, skippedModelCount: 0 },
+    config: { timeoutMs: 1000, concurrency: 1, maxTokens: 1024, clientQuietMs: 0, modelCount: 0, skippedModelCount: 0 },
     counts: emptyCounts(),
     results: [],
   };
@@ -50,6 +50,7 @@ test("ProbeController rejects a manual run while another run is active", async (
       intervalMs: 60_000,
       historyLimit: 30,
       historyDir: dir,
+      clientQuietMs: 0,
       runner: async (options) => pending.promise.then(() => completedRun(options.runId ?? "run")),
     });
 
@@ -63,6 +64,58 @@ test("ProbeController rejects a manual run while another run is active", async (
     await waitForIdle(controller);
     const state = await controller.state();
     assert.equal(state.status, "idle");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ProbeController reports pause state while a run waits for client traffic to quiet", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "proxyai-probe-controller-"));
+  const waiting = deferred<void>();
+  const release = deferred<void>();
+  try {
+    const controller = new ProbeController({
+      history: new ProbeHistory(dir, 30),
+      nimBaseUrl: "https://example.test/v1",
+      nimApiKey: "key",
+      timeoutMs: 1000,
+      concurrency: 1,
+      intervalMs: 60_000,
+      historyLimit: 30,
+      historyDir: dir,
+      clientQuietMs: 30_000,
+      waitForClientQuiet: async ({ onPause, onResume }) => {
+        onPause({
+          reason: "active_clients",
+          since: "2026-01-01T00:00:00.000Z",
+          activeClients: 1,
+          quietForMs: null,
+          requiredQuietMs: 30_000,
+        });
+        waiting.resolve(undefined);
+        await release.promise;
+        onResume();
+      },
+      runner: async (options) => {
+        await options.beforeProbe?.("model");
+        return completedRun(options.runId ?? "run");
+      },
+    });
+
+    const first = controller.triggerManual();
+    assert.equal(first.accepted, true);
+    await waiting.promise;
+
+    const paused = await controller.state();
+    assert.equal(paused.status, "running");
+    assert.equal(paused.pause?.reason, "active_clients");
+    assert.equal(paused.pause?.activeClients, 1);
+    assert.equal(paused.config.clientQuietMs, 30_000);
+
+    release.resolve(undefined);
+    await waitForIdle(controller);
+    const idle = await controller.state();
+    assert.equal(idle.pause, null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -51,5 +51,6 @@ export const config = {
   probeHistoryDir: text("PROBE_HISTORY_DIR", ".probe-history"),
   probeTimeoutMs: int("PROBE_TIMEOUT_MS", 30_000),
   probeConcurrency: int("PROBE_CONCURRENCY", 3),
+  probeClientQuietMs: int("PROBE_CLIENT_QUIET_MS", 30_000),
   aliases: parseAliases(),
 } as const;

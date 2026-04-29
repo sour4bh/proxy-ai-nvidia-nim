@@ -87,7 +87,7 @@ export function probePage(): string {
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 12px;
     }
     .panel {
@@ -272,15 +272,18 @@ export function probePage(): string {
       const run = state.activeRun || state.latest;
       const counts = run?.counts || { alive: 0, timeout: 0, rate_limited: 0, error: 0, skipped: 0 };
       runBtn.disabled = Boolean(state.activeRun);
-      statusLine.textContent = state.activeRun
-        ? "Running " + state.activeRun.source + " probe started " + fmtTime(state.activeRun.startedAt)
-        : "Idle - next scheduled " + fmtTime(state.scheduler.nextRunAt);
+      statusLine.textContent = state.pause
+        ? "Paused for client traffic - " + state.pause.activeClients + " active, quiet " + fmtMs(state.pause.quietForMs)
+        : state.activeRun
+          ? "Running " + state.activeRun.source + " probe started " + fmtTime(state.activeRun.startedAt)
+          : "Idle - next scheduled " + fmtTime(state.scheduler.nextRunAt);
       metrics.innerHTML = [
         metric("Alive", counts.alive, "ready models"),
         metric("Timeout", counts.timeout, "no bytes before timeout"),
         metric("Rate Limited", counts.rate_limited, "upstream 429"),
         metric("Error", counts.error, "non-429 failures"),
-        metric("Skipped", counts.skipped, "local limiter/backpressure")
+        metric("Skipped", counts.skipped, "local limiter/backpressure"),
+        metric("Clients", state.traffic?.activeClients ?? 0, state.pause ? "probe paused" : "quiet " + fmtMs(state.traffic?.quietForMs))
       ].join("");
       latestMeta.textContent = run ? (run.status + " - " + run.source + " - " + fmtTime(run.startedAt)) : "";
       const results = [...(run?.results || [])].sort((a, b) => {

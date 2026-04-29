@@ -16,6 +16,7 @@ export type ProbeRunConfig = {
   timeoutMs: number;
   concurrency: number;
   maxTokens: number;
+  clientQuietMs: number;
   modelCount: number;
   skippedModelCount: number;
 };

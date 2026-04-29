@@ -14,8 +14,10 @@ export type ProbeRunnerOptions = {
   timeoutMs: number;
   concurrency: number;
   maxTokens?: number;
+  clientQuietMs?: number;
   fetchImpl?: Fetch;
   acquire?: (signal: AbortSignal) => Promise<void>;
+  beforeProbe?: (modelId: string) => Promise<void>;
   runId?: string;
   startedAt?: string;
   onConfig?: (config: ProbeRun["config"]) => void;
@@ -109,6 +111,7 @@ export async function runProbe(options: ProbeRunnerOptions): Promise<ProbeRun> {
     timeoutMs: options.timeoutMs,
     concurrency: options.concurrency,
     maxTokens,
+    clientQuietMs: options.clientQuietMs ?? 0,
     modelCount: 0,
     skippedModelCount: 0,
   };
@@ -122,6 +125,7 @@ export async function runProbe(options: ProbeRunnerOptions): Promise<ProbeRun> {
     const worker = async (): Promise<void> => {
       while (cursor < ids.length) {
         const modelId = ids[cursor++]!;
+        await options.beforeProbe?.(modelId);
         const result = await probeOne(modelId, { ...options, maxTokens });
         results.push(result);
         options.onResult?.(result);

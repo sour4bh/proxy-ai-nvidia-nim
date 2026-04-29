@@ -74,7 +74,7 @@ Translation covers:
 
 The scheduler starts after server boot, runs once shortly after boot, then every `PROBE_INTERVAL_MS` (default 6 hours). Results are file-backed under `PROBE_HISTORY_DIR` (default `.probe-history`) with `latest.json` plus the last `PROBE_HISTORY_LIMIT` run files (default 30). `.probe-history/` is gitignored.
 
-Probe requests fetch NIM `/models`, filter likely non-chat IDs, then call NIM `/chat/completions` with `max_tokens: 1024`. Dashboard and scheduled probes inject the shared `limiter.acquire(...)` before each chat-completions probe so health checks do not bypass the same NIM budget used by live proxy traffic. The CLI probe (`pnpm probe`) uses the same runner without the server limiter.
+Probe requests fetch NIM `/models`, filter likely non-chat IDs, then call NIM `/chat/completions` with `max_tokens: 1024`. Dashboard and scheduled probes wait before each model until `TrafficMonitor` sees no active `/v1/chat/completions` or `/v1/messages` clients and `PROBE_CLIENT_QUIET_MS` has elapsed since the most recent client activity (default 30 seconds). `TrafficMonitor` tracks response body consumption, so streaming clients keep probes paused until the stream ends. After the quiet gate opens, probes still inject the shared `limiter.acquire(...)` before each chat-completions probe so health checks do not bypass the same NIM budget used by live proxy traffic. The CLI probe (`pnpm probe`) uses the same runner without the server limiter or client-traffic quiet gate.
 
 Probe run JSON is stable around `{id, source, status, startedAt, finishedAt, durationMs, config, counts, results}`. Result categories are `alive`, `timeout`, `rate_limited`, `error`, and `skipped`; `skipped` is reserved for local probe conditions like limiter rejection.
 
