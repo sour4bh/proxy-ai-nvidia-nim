@@ -6,12 +6,30 @@ import { messages } from "./anthropic.ts";
 import { listModels, loadUpstreamModels } from "./models.ts";
 import { errors } from "./errors.ts";
 import { log } from "./log.ts";
+import { ProbeHistory } from "./probe/history.ts";
+import { ProbeController } from "./probe/controller.ts";
+import { mountProbeRoutes } from "./probe/routes.ts";
 
 const app = new Hono();
+const probeHistory = new ProbeHistory(config.probeHistoryDir, config.probeHistoryLimit);
+const probeController = new ProbeController({
+  history: probeHistory,
+  nimBaseUrl: config.nimBaseUrl,
+  nimApiKey: config.nimApiKey,
+  timeoutMs: config.probeTimeoutMs,
+  concurrency: config.probeConcurrency,
+  intervalMs: config.probeIntervalMs,
+  historyLimit: config.probeHistoryLimit,
+  historyDir: config.probeHistoryDir,
+  acquire: limiter.acquire.bind(limiter),
+  log,
+});
 
 app.get("/health", (c) =>
   c.json({ ok: true, queueDepth: limiter.queueDepth, inUse: limiter.inUse }),
 );
+
+mountProbeRoutes(app, probeController);
 
 app.get("/v1/models", listModels);
 app.post("/v1/chat/completions", chatCompletions);
@@ -34,4 +52,5 @@ serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => 
     upstreamTimeoutMs: config.upstreamTimeoutMs,
     aliases: config.aliases,
   });
+  probeController.startScheduler();
 });

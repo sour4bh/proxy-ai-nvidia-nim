@@ -14,6 +14,11 @@ function int(name: string, fallback: number): number {
   return n;
 }
 
+function text(name: string, fallback: string): string {
+  const v = process.env[name];
+  return v && v.trim() ? v : fallback;
+}
+
 function parseAliases(): Record<string, string> {
   const args = process.argv.slice(2).filter((a) => a !== "--");
   const { values } = parseArgs({
@@ -41,5 +46,10 @@ export const config = {
   rateWindowMs: int("PROXY_RATE_WINDOW_MS", 60_000),
   maxQueueWaitMs: int("PROXY_MAX_QUEUE_WAIT_MS", 30_000),
   upstreamTimeoutMs: int("PROXY_UPSTREAM_TIMEOUT_MS", 600_000),
+  probeIntervalMs: int("PROBE_INTERVAL_MS", 21_600_000),
+  probeHistoryLimit: int("PROBE_HISTORY_LIMIT", 30),
+  probeHistoryDir: text("PROBE_HISTORY_DIR", ".probe-history"),
+  probeTimeoutMs: int("PROBE_TIMEOUT_MS", 30_000),
+  probeConcurrency: int("PROBE_CONCURRENCY", 3),
   aliases: parseAliases(),
 } as const;

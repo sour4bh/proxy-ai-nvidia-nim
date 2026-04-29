@@ -8,6 +8,7 @@
     "agent": "tsx --env-file=.env src/agent.ts",
     "start": "tsx --env-file=.env src/server.ts",
     "probe": "tsx --env-file=.env src/probe.ts",
+    "test": "tsx --test src/probe/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "packageManager": "pnpm@10.28.2",

@@ -13,6 +13,7 @@ pnpm typecheck                                    # tsc --noEmit, must be clean
 pnpm start                                        # boot proxy on 127.0.0.1:3000
 pnpm start --alias gpt-4o=meta/llama-3.3-70b-instruct
 pnpm start --alias=foo=bar                        # = form also works
+pnpm test                                         # probe subsystem tests
 pnpm hello                                        # AI SDK → NIM directly (smoke test)
 pnpm agent                                        # AI SDK ToolLoopAgent → NIM (smoke test)
 pnpm exec tsx --env-file=.env src/via-proxy.ts    # AI SDK → local proxy (smoke test)
@@ -25,7 +26,7 @@ pnpm exec tsx --env-file=.env src/via-proxy.ts    # AI SDK → local proxy (smok
 ### Two distinct surfaces in `src/`
 
 1. **Smoke tests** — `nim.ts`, `hello.ts`, `agent.ts`, `via-proxy.ts`. Use the AI SDK (`@ai-sdk/openai-compatible` + `ai`). These are isolated examples; they are NOT imported by the proxy.
-2. **Proxy** — `server.ts`, `proxy.ts`, `anthropic.ts`, `limiter.ts`, `models.ts`, `aliases.ts`, `config.ts`, `errors.ts`, `log.ts`. Hono on `@hono/node-server`. The AI SDK is intentionally absent here.
+2. **Proxy** — `server.ts`, `proxy.ts`, `anthropic.ts`, `limiter.ts`, `models.ts`, `aliases.ts`, `config.ts`, `errors.ts`, `log.ts`, and `probe/`. Hono on `@hono/node-server`. The AI SDK is intentionally absent here.
 
 ### Proxy invariants (load-bearing — read before changing)
 
@@ -67,6 +68,16 @@ Translation covers:
 - **Stop reasons**: `"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`, `"length"` → `"max_tokens"`.
 - **Errors**: returned in Anthropic error shape `{type: "error", error: {type, message}}` rather than OpenAI shape.
 
+### Probe dashboard (`probe/`)
+
+`GET /probe` serves the zero-build browser dashboard. `GET /probe/state` returns scheduler state, the active run, latest run, retained history summaries, and probe config. `POST /probe/run` starts a manual run and returns 409 if another run is active.
+
+The scheduler starts after server boot, runs once shortly after boot, then every `PROBE_INTERVAL_MS` (default 6 hours). Results are file-backed under `PROBE_HISTORY_DIR` (default `.probe-history`) with `latest.json` plus the last `PROBE_HISTORY_LIMIT` run files (default 30). `.probe-history/` is gitignored.
+
+Probe requests fetch NIM `/models`, filter likely non-chat IDs, then call NIM `/chat/completions` with `max_tokens: 1024`. Dashboard and scheduled probes inject the shared `limiter.acquire(...)` before each chat-completions probe so health checks do not bypass the same NIM budget used by live proxy traffic. The CLI probe (`pnpm probe`) uses the same runner without the server limiter.
+
+Probe run JSON is stable around `{id, source, status, startedAt, finishedAt, durationMs, config, counts, results}`. Result categories are `alive`, `timeout`, `rate_limited`, `error`, and `skipped`; `skipped` is reserved for local probe conditions like limiter rejection.
+
 **Claude Code usage (session-scoped):**
 ```bash
 ANTHROPIC_BASE_URL=http://100.73.92.10:3000 ANTHROPIC_API_KEY=unused claude
@@ -80,10 +91,10 @@ pnpm start --alias claude-sonnet-4-6=meta/llama-3.3-70b-instruct \
 
 ### Out of scope (intentional)
 
-- **No multi-provider failover, no Redis, no metrics stack, no Docker, no auth providers, no DB.** Single-process, in-memory state only.
+- **No multi-provider failover, no Redis, no metrics stack, no Docker, no auth providers, no DB.** Single-process runtime with file-backed probe history only.
 
 ## Convention notes
 
 - `tsconfig.json` has `allowImportingTsExtensions: true`. Imports use `.ts` suffixes (`import { x } from "./foo.ts"`).
 - ESM only (`"type": "module"`).
-- `src/` is flat — no `handlers/`, `services/`, `routes/` subdirs. One file per concept, named after the domain it owns.
+- `src/` is mostly flat. The `probe/` subtree is the owning home for the dashboard, scheduler, history, tests, and shared probe runner because the probe is now a concept family rather than one script.

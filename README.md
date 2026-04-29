@@ -123,12 +123,19 @@ Check health and limiter state:
 curl http://127.0.0.1:3000/health
 ```
 
+Open the probe dashboard:
+
+```text
+http://127.0.0.1:3000/probe
+```
+
 ## Commands
 
 ```bash
 pnpm start
 pnpm start --alias gpt-4o=meta/llama-3.3-70b-instruct
 pnpm typecheck
+pnpm test
 
 pnpm hello
 pnpm agent
@@ -142,10 +149,11 @@ Command purposes:
 | --- | --- |
 | `pnpm start` | Start the local proxy. |
 | `pnpm typecheck` | Run `tsc --noEmit`. |
+| `pnpm test` | Run probe subsystem tests with Node's test runner through `tsx`. |
 | `pnpm hello` | Smoke test the AI SDK directly against NIM. |
 | `pnpm agent` | Smoke test an AI SDK `ToolLoopAgent` directly against NIM. |
 | `src/via-proxy.ts` | Smoke test the AI SDK through the local proxy. |
-| `pnpm probe` | Probe upstream NIM chat-capable models. |
+| `pnpm probe` | Run the CLI version of the upstream NIM model probe. |
 
 ## Configuration
 
@@ -162,6 +170,9 @@ Runtime configuration is owned by `src/config.ts`.
 | `PROXY_UPSTREAM_TIMEOUT_MS` | No | `600000` | Max upstream fetch duration. |
 | `PROBE_TIMEOUT_MS` | No | `30000` | Probe-only per-model timeout. |
 | `PROBE_CONCURRENCY` | No | `3` | Probe-only upstream concurrency. |
+| `PROBE_INTERVAL_MS` | No | `21600000` | Scheduled dashboard probe interval. |
+| `PROBE_HISTORY_LIMIT` | No | `30` | Retained probe run count. |
+| `PROBE_HISTORY_DIR` | No | `.probe-history` | File-backed probe history directory. |
 
 The NIM base URL is currently fixed in code:
 
@@ -183,6 +194,9 @@ Unknown model names pass through unchanged.
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `GET` | `/health` | Returns `{ ok, queueDepth, inUse }`. |
+| `GET` | `/probe` | Browser dashboard for scheduled and manual probes. |
+| `GET` | `/probe/state` | JSON scheduler state, active run, latest run, history, and probe config. |
+| `POST` | `/probe/run` | Starts a manual probe, or returns 409 if another probe is active. |
 | `GET` | `/v1/models` | Returns alias model entries plus cached upstream NIM models. |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible Chat Completions proxy. |
 | `POST` | `/v1/messages` | Anthropic Messages adapter over NIM Chat Completions. |
@@ -203,12 +217,13 @@ src/
   models.ts      upstream model cache and /v1/models response
   errors.ts      OpenAI-shaped error helpers
   log.ts         request IDs and JSON logs
+  probe/         probe runner, history, scheduler, routes, dashboard, tests
 
   nim.ts         direct AI SDK NIM client for smoke scripts
   hello.ts       direct NIM text smoke test
   agent.ts       direct NIM tool-agent smoke test
   via-proxy.ts   AI SDK smoke test through the local proxy
-  probe.ts       upstream NIM model probe
+  probe.ts       CLI entry for the upstream NIM model probe
 ```
 
 The runtime proxy files do not import the AI SDK. The AI SDK is isolated to
@@ -227,6 +242,7 @@ tsx --env-file=.env src/server.ts
   +--> src/config.ts parses env and CLI aliases
   +--> src/proxy.ts creates the shared limiter
   +--> src/models.ts loads upstream models once
+  +--> src/probe/controller.ts schedules probe runs after boot
   +--> Hono serves routes on PROXY_HOST:PROXY_PORT
 ```
 
@@ -234,6 +250,10 @@ tsx --env-file=.env src/server.ts
 `loadUpstreamModels()` fetches NIM's `/models` endpoint and stores the result in
 memory. If that upstream fetch fails, the cache becomes an empty list and the
 server still boots.
+
+The probe scheduler starts from the server listen callback. It runs once shortly
+after boot and then every `PROBE_INTERVAL_MS`. Results are written under
+`PROBE_HISTORY_DIR` and bounded by `PROBE_HISTORY_LIMIT`.
 
 ### OpenAI Chat Completions Pipeline
 
@@ -407,6 +427,56 @@ Notable cases:
 The OpenAI route wraps non-JSON upstream errors into an OpenAI error object so
 clients can parse failures consistently.
 
+### Probe Dashboard Pipeline
+
+```text
+server boot
+  |
+  +--> ProbeController schedules first run after boot
+  |
+  v
+scheduled or manual probe
+  |
+  +--> fetch NIM /models
+  +--> filter likely non-chat models
+  +--> for each chat candidate:
+          acquire shared limiter slot
+          POST NIM /chat/completions with max_tokens=1024
+          classify alive, timeout, rate_limited, error, or skipped
+  +--> persist run JSON to PROBE_HISTORY_DIR
+  +--> update latest.json and retain last PROBE_HISTORY_LIMIT runs
+```
+
+The dashboard lives at `/probe`. It polls `/probe/state`, shows the active run
+or latest run, summarizes counts by category, lists failed/slow/rate-limited
+models, and shows retained history. The Run Now button calls `POST /probe/run`;
+if a probe is already active, the route returns 409 with the current run.
+
+Probe run JSON uses this shape:
+
+```ts
+type ProbeRun = {
+  id: string;
+  source: "scheduled" | "manual" | "cli";
+  status: "running" | "completed" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  config: {
+    timeoutMs: number;
+    concurrency: number;
+    maxTokens: number;
+    modelCount: number;
+    skippedModelCount: number;
+  };
+  counts: Record<"alive" | "timeout" | "rate_limited" | "error" | "skipped", number>;
+  results: ProbeResult[];
+};
+```
+
+Dashboard probes use the same shared limiter as `/v1/chat/completions` and
+`/v1/messages`, so model-health traffic does not bypass the upstream NIM budget.
+
 ## Client Examples
 
 ### OpenAI-Compatible Tools
@@ -468,10 +538,8 @@ pnpm start --alias claude-sonnet=meta/llama-3.3-70b-instruct
   service folders.
 - Keep the runtime proxy path free of AI SDK imports.
 - Preserve pass-through behavior in `src/proxy.ts`.
-- Run `pnpm typecheck` before publishing changes.
+- Run `pnpm typecheck` and `pnpm test` before publishing changes.
 
-There are currently no automated `*.test.*` or `*.spec.*` files. Runtime
-behavior is verified with typecheck and smoke scripts. For open-source growth,
-the highest-value tests would cover limiter timing, abort cleanup, upstream 429
-pause behavior, non-JSON error wrapping, OpenAI stream interruption framing, and
-Anthropic request/response translation.
+The probe subsystem has focused tests for result classification, file-history
+retention, and overlapping manual run rejection. Other runtime behavior is
+verified with typecheck and smoke scripts.
