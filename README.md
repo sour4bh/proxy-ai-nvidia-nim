@@ -1,27 +1,48 @@
 # proxyai
 
-Local OpenAI-compatible HTTP proxy for NVIDIA NIM.
+**OpenAI-compatible NVIDIA NIM proxy for local AI tools, coding agents, and TypeScript apps.**
 
-`proxyai` lets tools that speak OpenAI's Chat Completions API point at a local
-server while the proxy forwards requests to NVIDIA NIM at
-`https://integrate.api.nvidia.com/v1`. It is designed for local development,
-coding agents, command-line clients, and applications that need an
-OpenAI-shaped endpoint backed by NIM models.
+[![CI](https://github.com/sour4bh/proxyai/actions/workflows/ci.yml/badge.svg)](https://github.com/sour4bh/proxyai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178c6)
+![Hono](https://img.shields.io/badge/Hono-HTTP%20proxy-ff5b11)
+![NVIDIA NIM](https://img.shields.io/badge/NVIDIA%20NIM-compatible-76b900)
+![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-111827)
 
-The proxy also exposes a small Anthropic Messages compatibility endpoint. That
-path translates Anthropic-shaped requests into OpenAI Chat Completions requests,
-sends them to NIM, and translates the result back.
+`proxyai` is a small TypeScript/Hono AI gateway that turns NVIDIA NIM into a
+local OpenAI-compatible and Anthropic-compatible endpoint. Point Cursor, Aider,
+Claude-compatible clients, shell scripts, AI SDK apps, or your own local tools
+at one private proxy and let it handle model aliases, request shaping, rolling
+rate limits, upstream 429 pauses, and model health probes.
 
-## What This Is
+Use it when you want NVIDIA NIM's free-tier API behind a local LLM proxy with
+OpenAI Chat Completions compatibility, an Anthropic Messages adapter, a live
+rate-limit dashboard, and zero Redis, database, Docker, or hosted gateway
+requirements.
 
-- A local HTTP proxy with OpenAI-compatible `/v1/chat/completions`.
-- A shared rolling-window rate limiter tuned by default to 40 requests per
-  60 seconds.
-- CLI-driven model aliases, so clients can ask for names like `gpt-4o` while
-  NIM receives a real model ID.
-- An Anthropic Messages adapter at `/v1/messages`.
-- A set of smoke scripts for direct NIM calls, local proxy calls, agent/tool
-  calls, and upstream model probing.
+## Why proxyai
+
+- **OpenAI-compatible Chat Completions** at `/v1/chat/completions`, with
+  wire-format pass-through for clients that depend on OpenAI-shaped behavior.
+- **Anthropic Messages compatibility** at `/v1/messages`, backed by NIM's
+  OpenAI-compatible Chat Completions endpoint.
+- **Shared rolling-window limiter** tuned for NIM's free-tier budget, including
+  FIFO queueing, client-abort cleanup, and upstream `Retry-After` pauses.
+- **Model aliases** from CLI flags, so local clients can ask for names like
+  `gpt-4o` or `claude-sonnet` while NIM receives real model IDs.
+- **Probe dashboard** at `/probe` with scheduled model checks, retained history,
+  live client traffic, and temporal rate-limit usage.
+- **Local-first runtime** with one Node.js process and in-memory state.
+
+## Common Use Cases
+
+- Run coding agents and OpenAI-compatible tools against NVIDIA NIM models.
+- Give Anthropic-shaped clients a local compatibility endpoint backed by NIM.
+- Share one local/Tailscale NIM budget across multiple clients without
+  accidentally bursting past the upstream rate limit.
+- Discover which public NIM chat models are alive, slow, timing out, or failing.
+- Build a minimal OpenAI-compatible proxy without adopting a full multi-provider
+  gateway stack.
 
 ## What This Is Not
 
@@ -47,7 +68,7 @@ to the public internet.
 
 ## Requirements
 
-- Node.js with built-in `fetch`, `AbortSignal.timeout`, and
+- Node.js 20 or newer with built-in `fetch`, `AbortSignal.timeout`, and
   `AbortSignal.any`.
 - pnpm 10.x.
 - An NVIDIA NIM API key in `NVIDIA_NIM_API_KEY`.
@@ -59,6 +80,12 @@ pnpm install
 ```
 
 Create a local `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then set your NIM key:
 
 ```bash
 NVIDIA_NIM_API_KEY=your_nim_key_here
@@ -563,3 +590,20 @@ pnpm start --alias claude-sonnet=meta/llama-3.3-70b-instruct
 The probe subsystem has focused tests for result classification, file-history
 retention, and overlapping manual run rejection. Other runtime behavior is
 verified with typecheck and smoke scripts.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+before changing proxy behavior, especially the pass-through request path,
+limiter semantics, or Anthropic translation layer.
+
+## Security
+
+`proxyai` intentionally has no client authentication. Run it on localhost or a
+private network boundary, and do not expose it directly to the public internet.
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and deployment
+guidance.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

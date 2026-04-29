@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a focused improvement to proxyai.
+title: "Feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that proxyai does not handle today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version of the change.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - OpenAI proxy
+        - Anthropic adapter
+        - Rate limiter
+        - Probe dashboard
+        - Documentation
+        - Other
+    validations:
+      required: true

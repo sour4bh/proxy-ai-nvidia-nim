@@ -81,7 +81,7 @@ Probe run JSON is stable around `{id, source, status, startedAt, finishedAt, dur
 
 **Claude Code usage (session-scoped):**
 ```bash
-ANTHROPIC_BASE_URL=http://100.73.92.10:3000 ANTHROPIC_API_KEY=unused claude
+ANTHROPIC_BASE_URL=http://127.0.0.1:3000 ANTHROPIC_API_KEY=unused claude
 ```
 Aliases must map the claude model name to a NIM model (CLI flags, not env):
 ```bash

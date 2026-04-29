@@ -1,7 +1,31 @@
 {
   "name": "proxyai",
   "version": "1.0.0",
+  "description": "OpenAI-compatible NVIDIA NIM proxy with Anthropic Messages support, rolling rate limits, model aliases, and a probe dashboard.",
   "private": true,
+  "license": "MIT",
+  "keywords": [
+    "nvidia-nim",
+    "openai-compatible",
+    "openai-proxy",
+    "anthropic",
+    "chat-completions",
+    "llm-proxy",
+    "ai-gateway",
+    "hono",
+    "typescript",
+    "rate-limiter",
+    "coding-agents",
+    "local-ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sour4bh/proxyai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sour4bh/proxyai/issues"
+  },
+  "homepage": "https://github.com/sour4bh/proxyai#readme",
   "type": "module",
   "scripts": {
     "hello": "tsx --env-file=.env src/hello.ts",
@@ -10,6 +34,10 @@
     "probe": "tsx --env-file=.env src/probe.ts",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=10.0.0"
   },
   "packageManager": "pnpm@10.28.2",
   "dependencies": {
