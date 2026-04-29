@@ -20,12 +20,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sour4bh/proxyai.git"
+    "url": "git+https://github.com/sour4bh/proxy-ai-nvidia-nim.git"
   },
   "bugs": {
-    "url": "https://github.com/sour4bh/proxyai/issues"
+    "url": "https://github.com/sour4bh/proxy-ai-nvidia-nim/issues"
   },
-  "homepage": "https://github.com/sour4bh/proxyai#readme",
+  "homepage": "https://github.com/sour4bh/proxy-ai-nvidia-nim#readme",
   "type": "module",
   "scripts": {
     "hello": "tsx --env-file=.env src/hello.ts",

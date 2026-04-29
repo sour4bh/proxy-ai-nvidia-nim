@@ -2,7 +2,7 @@
 
 **OpenAI-compatible NVIDIA NIM proxy for local AI tools, coding agents, and TypeScript apps.**
 
-[![CI](https://github.com/sour4bh/proxyai/actions/workflows/ci.yml/badge.svg)](https://github.com/sour4bh/proxyai/actions/workflows/ci.yml)
+[![CI](https://github.com/sour4bh/proxy-ai-nvidia-nim/actions/workflows/ci.yml/badge.svg)](https://github.com/sour4bh/proxy-ai-nvidia-nim/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178c6)
 ![Hono](https://img.shields.io/badge/Hono-HTTP%20proxy-ff5b11)
