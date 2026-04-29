@@ -18,7 +18,7 @@ export class ProbeHistory {
 
   async latest(): Promise<ProbeRun | null> {
     try {
-      return JSON.parse(await readFile(join(this.dir, "latest.json"), "utf8")) as ProbeRun;
+      return parseRun(await readFile(join(this.dir, "latest.json"), "utf8"));
     } catch {
       return null;
     }
@@ -41,7 +41,7 @@ export class ProbeHistory {
     for (const file of files) {
       if (!file.endsWith(".json") || file === "latest.json" || file.endsWith(".tmp")) continue;
       try {
-        runs.push(JSON.parse(await readFile(join(this.dir, file), "utf8")) as ProbeRun);
+        runs.push(parseRun(await readFile(join(this.dir, file), "utf8")));
       } catch {
         continue;
       }
@@ -65,6 +65,21 @@ export class ProbeHistory {
     await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`);
     await rename(tmp, path);
   }
+}
+
+function parseRun(contents: string): ProbeRun {
+  const run = JSON.parse(contents) as ProbeRun;
+  return {
+    ...run,
+    config: {
+      timeoutMs: run.config.timeoutMs,
+      concurrency: run.config.concurrency,
+      maxTokens: run.config.maxTokens,
+      clientQuietMs: run.config.clientQuietMs ?? 0,
+      modelCount: run.config.modelCount,
+      skippedModelCount: run.config.skippedModelCount,
+    },
+  };
 }
 
 export function summarizeRun(run: ProbeRun): ProbeRunSummary {

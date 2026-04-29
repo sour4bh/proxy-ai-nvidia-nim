@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -44,6 +44,21 @@ test("ProbeHistory retains only the configured number of run files", async () =>
     assert.equal(summaries.length, 30);
     assert.equal(summaries[0]?.id, "run-31");
     assert.equal(summaries[0]?.resultCount, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ProbeHistory fills client quiet config for older run files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "proxyai-probe-"));
+  try {
+    const oldRun = run(1);
+    const { clientQuietMs: _clientQuietMs, ...oldConfig } = oldRun.config;
+    await writeFile(join(dir, "latest.json"), `${JSON.stringify({ ...oldRun, config: oldConfig })}\n`);
+
+    const history = new ProbeHistory(dir, 30);
+    const latest = await history.latest();
+    assert.equal(latest?.config.clientQuietMs, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
