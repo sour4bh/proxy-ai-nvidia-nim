@@ -28,7 +28,7 @@ async function probeOne(id: string): Promise<Result> {
       body: JSON.stringify({
         model: id,
         messages: [{ role: "user", content: "hi" }],
-        max_tokens: 1,
+        max_tokens: 1024,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
