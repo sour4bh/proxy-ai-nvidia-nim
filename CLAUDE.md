@@ -63,7 +63,7 @@ Translation covers:
 - **Messages**: `tool_result` content blocks → `role: "tool"` messages; `tool_use` blocks → `tool_calls`; `system` string or block array → system message prepended.
 - **Tools**: `input_schema` → `parameters`; wrapped in `{type: "function"}`.
 - **Tool choice**: `"any"` → `"required"`, `{type: "tool"}` → `{type: "function"}`.
-- **Streaming**: OpenAI delta chunks → Anthropic SSE event sequence (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Tool call argument deltas → `input_json_delta`.
+- **Streaming**: requests OpenAI `stream_options.include_usage`, then converts OpenAI delta chunks → Anthropic SSE event sequence (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Tool call argument deltas → `input_json_delta`; final upstream usage maps to Anthropic `input_tokens` / `output_tokens` in `message_delta`.
 - **Stop reasons**: `"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`, `"length"` → `"max_tokens"`.
 - **Errors**: returned in Anthropic error shape `{type: "error", error: {type, message}}` rather than OpenAI shape.
 

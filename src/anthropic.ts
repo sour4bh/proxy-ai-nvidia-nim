@@ -155,6 +155,7 @@ function buildOAIRequest(body: AnthropicRequest, resolvedModel: string): Record<
     max_tokens: body.max_tokens ?? 8096,
     stream: body.stream ?? false,
   };
+  if (body.stream === true) req.stream_options = { include_usage: true };
   if (body.temperature !== undefined) req.temperature = body.temperature;
   if (body.top_p !== undefined) req.top_p = body.top_p;
   if (tools) req.tools = tools;
@@ -226,6 +227,7 @@ function translateStream(
       // OAI tool-call index → our content block index
       const toolBlocks = new Map<number, { blockIdx: number }>();
       let finalStopReason = "end_turn";
+      let inputTokens = 0;
       let outputTokens = 0;
 
       try {
@@ -255,10 +257,17 @@ function translateStream(
                 };
                 finish_reason?: string | null;
               }[];
-              usage?: { completion_tokens?: number };
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
             };
             let chunk: Chunk;
             try { chunk = JSON.parse(payload) as Chunk; } catch { continue; }
+
+            if (typeof chunk.usage?.prompt_tokens === "number") {
+              inputTokens = chunk.usage.prompt_tokens;
+            }
+            if (typeof chunk.usage?.completion_tokens === "number") {
+              outputTokens = chunk.usage.completion_tokens;
+            }
 
             const choice = chunk.choices?.[0];
             if (!choice) continue;
@@ -335,9 +344,6 @@ function translateStream(
             if (choice.finish_reason) {
               finalStopReason = oaiFinishToStopReason(choice.finish_reason);
             }
-            if (chunk.usage?.completion_tokens) {
-              outputTokens = chunk.usage.completion_tokens;
-            }
           }
         }
 
@@ -352,7 +358,7 @@ function translateStream(
         controller.enqueue(ev("message_delta", {
           type: "message_delta",
           delta: { stop_reason: finalStopReason, stop_sequence: null },
-          usage: { output_tokens: outputTokens },
+          usage: { input_tokens: inputTokens, output_tokens: outputTokens },
         }));
         controller.enqueue(ev("message_stop", { type: "message_stop" }));
       } catch (e) {
