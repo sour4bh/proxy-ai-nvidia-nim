@@ -888,6 +888,13 @@ export function probePage(): string {
       border-color: var(--border-strong);
       color: var(--text);
     }
+    .alias-pick-target {
+      cursor: pointer;
+    }
+    .alias-pick-target:hover .model-id,
+    .alias-pick-target:hover .hbar-label {
+      color: var(--accent);
+    }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -1282,7 +1289,7 @@ export function probePage(): string {
       const latency = cat === "alive" && typeof result.ms === "number"
         ? '<span class="latency"><span class="latency-bar"><span class="latency-bar-fill" style="width:' + Math.max(4, Math.round((result.ms / Math.max(1, maxAliveMs)) * 100)) + '%"></span></span><span class="latency-value">' + esc(fmtMs(result.ms)) + '</span></span>'
         : '<span class="muted">' + esc(fmtMs(result.ms)) + '</span>';
-      return '<tr>'
+      return '<tr class="alias-pick-target" data-alias-model="' + esc(result.id) + '" title="Select alias for this model">'
         + '<td><span class="model-id">' + esc(result.id) + '</span></td>'
         + '<td><span class="badge ' + esc(cat) + '"><span class="dot"></span>' + esc(label) + '</span></td>'
         + '<td class="muted num">' + esc(result.status || "—") + '</td>'
@@ -1413,7 +1420,7 @@ export function probePage(): string {
         const fillHTML = ms > 0
           ? '<div class="hbar-fill ' + esc(r.category) + '" style="width:' + pct + '%"></div>'
           : '';
-        return '<div class="hbar-row" data-kind="result" data-idx="' + i + '">'
+        return '<div class="hbar-row alias-pick-target" data-kind="result" data-idx="' + i + '" data-alias-model="' + esc(r.id) + '" title="Select alias for this model">'
           + '<span class="hbar-label">' + esc(r.id) + '</span>'
           + '<div class="hbar-track' + trackClass + '">' + fillHTML + '</div>'
           + '<span class="hbar-value"><span class="badge-mini" style="background:var(--' + esc(r.category) + ')"></span>' + esc(fmtMs(r.ms)) + '</span>'
@@ -1430,7 +1437,7 @@ export function probePage(): string {
       const max = Math.max(1, ...fastest.map((r) => r.ms || 0));
       fastestChart.innerHTML = fastest.map((r, i) => {
         const pct = Math.max(6, Math.round((r.ms / max) * 100));
-        return '<div class="hbar-row" data-kind="fastest" data-idx="' + i + '">'
+        return '<div class="hbar-row alias-pick-target" data-kind="fastest" data-idx="' + i + '" data-alias-model="' + esc(r.id) + '" title="Select alias for this model">'
           + '<span class="hbar-label">' + esc(r.id) + '</span>'
           + '<div class="hbar-track"><div class="hbar-fill alive" style="width:' + pct + '%"></div></div>'
           + '<span class="hbar-value">' + esc(fmtMs(r.ms)) + '</span>'
@@ -1536,9 +1543,9 @@ export function probePage(): string {
       const dots = points.map((p, i) => {
         const cx = toX(p.index).toFixed(1);
         const cy = toY(p.ms).toFixed(1);
-        return '<circle class="scatter-dot" r="6" cx="' + cx + '" cy="' + cy
+        return '<circle class="scatter-dot alias-pick-target" r="6" cx="' + cx + '" cy="' + cy
           + '" fill="var(--alive)" fill-opacity="0.75" stroke="var(--alive)" stroke-width="1.5" stroke-opacity="0.4"'
-          + ' data-kind="dot" data-idx="' + i + '"/>';
+          + ' data-kind="dot" data-idx="' + i + '" data-alias-model="' + esc(p.id) + '" title="Select alias for this model"/>';
       }).join("");
 
       scatterChart.innerHTML = yGridLines + xGridLines + axisLines + dots + xLabel + yLabel;
@@ -1610,7 +1617,7 @@ export function probePage(): string {
             + '<div class="alias-row-model">' + esc(modelId) + '</div>'
             + '<div class="alias-row-map">' + esc(mapped) + '</div>'
             + '</div>'
-            + '<button class="alias-btn" type="button" data-model-id="' + esc(modelId) + '">Select alias</button>'
+            + '<button class="alias-btn" type="button" data-alias-model="' + esc(modelId) + '">Select alias</button>'
             + '</div>';
         }).join("")
         : '<div class="empty">No models available yet. Run a probe first.</div>';
@@ -1684,7 +1691,7 @@ export function probePage(): string {
 
       renderFastestChart(fastest);
       fastestBody.innerHTML = fastest.length
-        ? fastest.map((r) => '<tr><td><span class="model-id">' + esc(r.id) + '</span></td><td class="latency-cell"><span class="latency"><span class="latency-bar"><span class="latency-bar-fill" style="width:' + Math.max(6, Math.round((r.ms / fastestMax) * 100)) + '%"></span></span><span class="latency-value">' + esc(fmtMs(r.ms)) + '</span></span></td></tr>').join("")
+        ? fastest.map((r) => '<tr class="alias-pick-target" data-alias-model="' + esc(r.id) + '" title="Select alias for this model"><td><span class="model-id">' + esc(r.id) + '</span></td><td class="latency-cell"><span class="latency"><span class="latency-bar"><span class="latency-bar-fill" style="width:' + Math.max(6, Math.round((r.ms / fastestMax) * 100)) + '%"></span></span><span class="latency-value">' + esc(fmtMs(r.ms)) + '</span></span></td></tr>').join("")
         : '<tr><td colspan="2"><div class="empty">No alive models yet.</div></td></tr>';
 
       historyBody.innerHTML = state.history.length
@@ -1776,10 +1783,12 @@ export function probePage(): string {
       await load();
     });
 
-    aliasList.addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-model-id]");
-      if (!btn) return;
-      openAliasModal(btn.dataset.modelId);
+    document.addEventListener("click", (e) => {
+      const target = e.target.closest("[data-alias-model]");
+      if (!target) return;
+      const modelId = target.dataset.aliasModel;
+      if (!modelId) return;
+      openAliasModal(modelId);
     });
 
     aliasPresetSelect.addEventListener("change", () => {
