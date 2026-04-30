@@ -47,11 +47,16 @@ Custom rolling-window token bucket — `bottleneck`, `p-queue`, and AI SDK helpe
 - One `setTimeout` wake-loop drains the queue on the next available slot or after `pausedUntil`.
 - `limiter.snapshot()` is the read-only contract for live temporal rate-limit usage in `/health` and `/probe`: it reports current rolling-window entries, remaining slots, queue depth, upstream pause timing, and next-slot timing.
 
-### Aliases (`aliases.ts`, `config.ts`)
+### Aliases (`config.ts`, `alias-map.ts`, `aliases.ts`, `probe/routes.ts`)
 
-CLI-driven only. No env var, no defaults baked in. Parsed via `node:util` `parseArgs` from `process.argv`. The `--` separator that pnpm sometimes forwards is filtered out before parsing. Short flag `-a` was dropped because it collides with pnpm's own `-a`.
+Startup aliases are still parsed from CLI flags via `config.ts` (`--alias key=value`, filtered `--` separator, no `-a` short flag). At runtime, aliases live in an in-memory map (`alias-map.ts`) and can be replaced without restart.
 
-Aliases are pure resolution — `body.model = aliases[body.model] ?? body.model`. Unknown models pass through unchanged.
+Alias resolution stays pure (`aliases[model] ?? model`) for both `/v1/chat/completions` and `/v1/messages`. Unknown models pass through unchanged.
+
+Runtime alias API (dashboard-facing):
+- `GET /probe/aliases` → current alias entries
+- `PUT /probe/aliases` with `{ aliases: Record<string, string> }` → replace entire in-memory map (non-empty string keys/values only)
+- Runtime updates are **not persisted**; process restart returns to startup CLI aliases.
 
 ### Status code edge case
 
@@ -71,13 +76,19 @@ Translation covers:
 
 ### Probe dashboard (`probe/`)
 
-`GET /probe` serves the zero-build browser dashboard. `GET /probe/state` returns scheduler state, the active run, latest run, retained history summaries, live rate-limit usage, and probe config. `POST /probe/run` starts a manual run and returns 409 if another run is active.
+`GET /probe` serves the zero-build browser dashboard. `GET /probe/state` returns scheduler state, the active run, latest run, retained history summaries, live rate-limit usage, probe config, and current alias entries. `POST /probe/run` starts a manual run and returns 409 if another run is active.
 
 The scheduler starts after server boot, runs once shortly after boot, then every `PROBE_INTERVAL_MS` (default 6 hours). Results are file-backed under `PROBE_HISTORY_DIR` (default `.probe-history`) with `latest.json` plus the last `PROBE_HISTORY_LIMIT` run files (default 30). `.probe-history/` is gitignored.
 
 Probe requests fetch NIM `/models`, filter likely non-chat IDs, then call NIM `/chat/completions` with `max_tokens: 1024`. Dashboard and scheduled probes wait before each model until `TrafficMonitor` sees no active `/v1/chat/completions` or `/v1/messages` clients and `PROBE_CLIENT_QUIET_MS` has elapsed since the most recent client activity (default 30 seconds). `TrafficMonitor` tracks response body consumption, so streaming clients keep probes paused until the stream ends. After the quiet gate opens, probes still inject the shared `limiter.acquire(...)` before each chat-completions probe so health checks do not bypass the same NIM budget used by live proxy traffic. The CLI probe (`pnpm probe`) uses the same runner without the server limiter or client-traffic quiet gate.
 
 Probe run JSON is stable around `{id, source, status, startedAt, finishedAt, durationMs, config, counts, results}`. Result categories are `alive`, `timeout`, `rate_limited`, `error`, and `skipped`; `skipped` is reserved for local probe conditions like limiter rejection.
+
+Alias editor UX in dashboard:
+- No raw JSON editing UI.
+- Users select a model entry and open a modal to map it to an existing alias name or a new custom alias.
+- Remove-mapping action is in the same modal.
+- Dashboard HTML is served directly from `src/probe/page.ts`; if a host still shows the old UI, that host is running older code and needs deploy + service restart.
 
 **Claude Code usage (session-scoped):**
 ```bash

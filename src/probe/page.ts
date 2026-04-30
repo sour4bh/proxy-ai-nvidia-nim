@@ -830,6 +830,135 @@ export function probePage(): string {
       -webkit-box-orient: vertical;
       word-break: break-word;
     }
+    .alias-help {
+      color: var(--text-3);
+      font-size: 12px;
+      margin: 2px 0 8px;
+    }
+    .alias-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 320px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .alias-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 8px 10px;
+    }
+    .alias-row-main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .alias-row-model {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .alias-row-map {
+      color: var(--text-3);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .alias-btn {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-2);
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 6px 9px;
+      cursor: pointer;
+    }
+    .alias-btn:hover {
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .alias-modal {
+      width: min(520px, calc(100vw - 24px));
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      box-shadow: var(--shadow-md);
+      padding: 16px;
+    }
+    .alias-modal h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+    .alias-modal .target {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      margin-bottom: 12px;
+      color: var(--text-2);
+      word-break: break-all;
+    }
+    .alias-modal label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .alias-modal select,
+    .alias-modal input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+    }
+    .alias-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .alias-modal-actions button {
+      border-radius: 8px;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-2);
+    }
+    .alias-modal-actions button.primary {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #38bdf8));
+    }
     @media (max-width: 960px) {
       .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .rate-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -980,12 +1109,10 @@ export function probePage(): string {
             <h2>Model aliases</h2>
             <span class="section-meta muted" id="aliasMeta"></span>
           </div>
-          <div style="display:flex; flex-direction:column; gap:10px;">
-            <textarea id="aliasEditor" spellcheck="false" style="width:100%; min-height:140px; resize:vertical; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); color:var(--text); font-family:'JetBrains Mono', ui-monospace, monospace; font-size:12px; padding:10px;"></textarea>
-            <div style="display:flex; gap:10px; align-items:center;">
-              <button class="run" id="saveAliasesBtn" type="button" style="padding:7px 12px; font-size:12px;">Apply aliases</button>
-              <span class="muted" id="aliasStatus"></span>
-            </div>
+          <div class="alias-help">Select any model below to map it to an existing alias name or a new custom alias.</div>
+          <div class="alias-list" id="aliasList"></div>
+          <div style="display:flex; gap:10px; align-items:center; margin-top:10px;">
+            <span class="muted" id="aliasStatus"></span>
           </div>
         </div>
       </div>
@@ -1000,6 +1127,21 @@ export function probePage(): string {
       </div>
     </section>
     <div class="tooltip" id="tooltip" hidden></div>
+    <div class="modal-backdrop" id="aliasModalBackdrop" hidden>
+      <div class="alias-modal" role="dialog" aria-modal="true" aria-labelledby="aliasModalTitle">
+        <h3 id="aliasModalTitle">Assign alias</h3>
+        <div class="target" id="aliasModalTarget"></div>
+        <label for="aliasPresetSelect">Use existing alias name</label>
+        <select id="aliasPresetSelect"></select>
+        <label for="aliasCustomInput">Or create custom alias name</label>
+        <input id="aliasCustomInput" type="text" placeholder="example: claude-sonnet-4-6">
+        <div class="alias-modal-actions">
+          <button type="button" id="aliasRemoveBtn">Remove mapping</button>
+          <button type="button" id="aliasCancelBtn">Cancel</button>
+          <button type="button" id="aliasApplyBtn" class="primary">Apply</button>
+        </div>
+      </div>
+    </div>
   </main>
   <script>
     const runBtn = document.getElementById("runBtn");
@@ -1032,9 +1174,15 @@ export function probePage(): string {
     const sortSelect = document.getElementById("sortSelect");
     const tooltip = document.getElementById("tooltip");
     const aliasMeta = document.getElementById("aliasMeta");
-    const aliasEditor = document.getElementById("aliasEditor");
-    const saveAliasesBtn = document.getElementById("saveAliasesBtn");
+    const aliasList = document.getElementById("aliasList");
     const aliasStatus = document.getElementById("aliasStatus");
+    const aliasModalBackdrop = document.getElementById("aliasModalBackdrop");
+    const aliasModalTarget = document.getElementById("aliasModalTarget");
+    const aliasPresetSelect = document.getElementById("aliasPresetSelect");
+    const aliasCustomInput = document.getElementById("aliasCustomInput");
+    const aliasCancelBtn = document.getElementById("aliasCancelBtn");
+    const aliasApplyBtn = document.getElementById("aliasApplyBtn");
+    const aliasRemoveBtn = document.getElementById("aliasRemoveBtn");
 
     const CATEGORY_LABEL = { alive: "Alive", timeout: "Timeout", rate_limited: "Rate limited", error: "Error", skipped: "Skipped" };
     const STACK_ORDER = ["alive", "rate_limited", "timeout", "error", "skipped"];
@@ -1043,6 +1191,8 @@ export function probePage(): string {
     let sortMode = "category";
     let lastState = null;
     let lastRate = null;
+    let aliasMap = {};
+    let selectedAliasTargetModel = "";
 
     function sortResults(results, analysis) {
       const rank = { error: 0, timeout: 1, rate_limited: 2, skipped: 3, alive: 4 };
@@ -1408,16 +1558,62 @@ export function probePage(): string {
       ].join("");
     }
 
+    function modelCandidates(state) {
+      const results = (state.activeRun || state.latest)?.results || [];
+      const modelSet = new Set(results.map((item) => item.id));
+      Object.values(aliasMap).forEach((target) => modelSet.add(target));
+      return Array.from(modelSet).sort((a, b) => a.localeCompare(b));
+    }
+
+    function openAliasModal(modelId) {
+      selectedAliasTargetModel = modelId;
+      aliasModalTarget.textContent = "Model target: " + modelId;
+      const keys = Object.keys(aliasMap).sort((a, b) => a.localeCompare(b));
+      const current = keys.find((key) => aliasMap[key] === modelId) || "";
+      aliasPresetSelect.innerHTML = ['<option value="">Select existing alias name...</option>']
+        .concat(keys.map((key) => '<option value="' + esc(key) + '">' + esc(key) + '</option>'))
+        .join("");
+      aliasPresetSelect.value = current;
+      aliasCustomInput.value = current;
+      aliasModalBackdrop.hidden = false;
+      aliasCustomInput.focus();
+      aliasCustomInput.select();
+    }
+
+    function closeAliasModal() {
+      aliasModalBackdrop.hidden = true;
+      selectedAliasTargetModel = "";
+    }
+
+    async function persistAliases(nextMap) {
+      const res = await fetch("/probe/aliases", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aliases: nextMap }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Update failed");
+      aliasMap = Object.fromEntries((body.aliases || []).map((entry) => [entry.id, entry.resolved]));
+    }
+
     function renderAliases(state) {
       const entries = (state.aliases || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+      aliasMap = Object.fromEntries(entries.map((entry) => [entry.id, entry.resolved]));
       aliasMeta.textContent = entries.length ? entries.length + " configured" : "none configured";
-      if (document.activeElement !== aliasEditor) {
-        const map = {};
-        entries.forEach((entry) => {
-          map[entry.id] = entry.resolved;
-        });
-        aliasEditor.value = JSON.stringify(map, null, 2);
-      }
+      const models = modelCandidates(state);
+      aliasList.innerHTML = models.length
+        ? models.map((modelId) => {
+          const existing = entries.find((entry) => entry.resolved === modelId);
+          const mapped = existing ? existing.id + " -> " + existing.resolved : "No alias mapped";
+          return '<div class="alias-row">'
+            + '<div class="alias-row-main">'
+            + '<div class="alias-row-model">' + esc(modelId) + '</div>'
+            + '<div class="alias-row-map">' + esc(mapped) + '</div>'
+            + '</div>'
+            + '<button class="alias-btn" type="button" data-model-id="' + esc(modelId) + '">Select alias</button>'
+            + '</div>';
+        }).join("")
+        : '<div class="empty">No models available yet. Run a probe first.</div>';
     }
 
     function statusFor(state) {
@@ -1580,33 +1776,72 @@ export function probePage(): string {
       await load();
     });
 
-    saveAliasesBtn.addEventListener("click", async () => {
-      let aliases;
-      try {
-        aliases = JSON.parse(aliasEditor.value || "{}");
-      } catch {
-        aliasStatus.textContent = "Invalid JSON";
+    aliasList.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-model-id]");
+      if (!btn) return;
+      openAliasModal(btn.dataset.modelId);
+    });
+
+    aliasPresetSelect.addEventListener("change", () => {
+      if (aliasPresetSelect.value) aliasCustomInput.value = aliasPresetSelect.value;
+    });
+
+    aliasCancelBtn.addEventListener("click", () => closeAliasModal());
+    aliasModalBackdrop.addEventListener("click", (e) => {
+      if (e.target === aliasModalBackdrop) closeAliasModal();
+    });
+
+    aliasApplyBtn.addEventListener("click", async () => {
+      const aliasName = aliasCustomInput.value.trim();
+      if (!selectedAliasTargetModel) return;
+      if (!aliasName) {
+        aliasStatus.textContent = "Alias name is required";
         return;
       }
-      saveAliasesBtn.disabled = true;
+      aliasApplyBtn.disabled = true;
       aliasStatus.textContent = "Applying...";
       try {
-        const res = await fetch("/probe/aliases", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ aliases }),
+        const nextMap = { ...aliasMap };
+        Object.keys(nextMap).forEach((key) => {
+          if (nextMap[key] === selectedAliasTargetModel) delete nextMap[key];
         });
-        const body = await res.json();
-        if (!res.ok) {
-          aliasStatus.textContent = body.error || "Update failed";
-          return;
-        }
+        nextMap[aliasName] = selectedAliasTargetModel;
+        await persistAliases(nextMap);
         aliasStatus.textContent = "Applied";
+        closeAliasModal();
         await load();
       } catch (err) {
         aliasStatus.textContent = err.message || "Update failed";
       } finally {
-        saveAliasesBtn.disabled = false;
+        aliasApplyBtn.disabled = false;
+      }
+    });
+
+    aliasRemoveBtn.addEventListener("click", async () => {
+      if (!selectedAliasTargetModel) return;
+      aliasRemoveBtn.disabled = true;
+      aliasStatus.textContent = "Removing...";
+      try {
+        const nextMap = { ...aliasMap };
+        let removed = false;
+        Object.keys(nextMap).forEach((key) => {
+          if (nextMap[key] === selectedAliasTargetModel) {
+            delete nextMap[key];
+            removed = true;
+          }
+        });
+        if (!removed) {
+          aliasStatus.textContent = "No mapping for model";
+          return;
+        }
+        await persistAliases(nextMap);
+        aliasStatus.textContent = "Removed";
+        closeAliasModal();
+        await load();
+      } catch (err) {
+        aliasStatus.textContent = err.message || "Remove failed";
+      } finally {
+        aliasRemoveBtn.disabled = false;
       }
     });
 
