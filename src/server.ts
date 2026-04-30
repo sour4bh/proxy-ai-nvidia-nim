@@ -4,6 +4,7 @@ import { config } from "./config.ts";
 import { chatCompletions, limiter } from "./proxy.ts";
 import { messages } from "./anthropic.ts";
 import { listModels, loadUpstreamModels } from "./models.ts";
+import { aliasEntries } from "./aliases.ts";
 import { errors } from "./errors.ts";
 import { log } from "./log.ts";
 import { ProbeHistory } from "./probe/history.ts";
@@ -33,6 +34,7 @@ const probeController = new ProbeController({
     }),
   traffic: () => traffic.snapshot(),
   rateLimit: () => limiter.snapshot(),
+  aliases: aliasEntries,
   log,
 });
 
@@ -67,7 +69,7 @@ serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => 
     rateWindowMs: config.rateWindowMs,
     maxQueueWaitMs: config.maxQueueWaitMs,
     upstreamTimeoutMs: config.upstreamTimeoutMs,
-    aliases: config.aliases,
+    aliases: Object.fromEntries(aliasEntries().map((entry) => [entry.id, entry.resolved])),
   });
   probeController.startScheduler();
 });

@@ -3,6 +3,7 @@ import { PROBE_MAX_TOKENS, runProbe, type ProbeRunnerOptions } from "./run.ts";
 import { countResults, emptyCounts, type ProbeRun, type ProbeRunSource, type ProbeRunSummary } from "./types.ts";
 import type { ProbePauseState, TrafficSnapshot } from "../traffic.ts";
 import type { LimiterSnapshot } from "../limiter.ts";
+import { MODEL_ANALYSIS, type ModelAnalysis } from "./analysis.ts";
 
 type Runner = (options: ProbeRunnerOptions) => Promise<ProbeRun>;
 
@@ -23,6 +24,7 @@ type ProbeControllerOptions = {
   }) => Promise<void>;
   traffic?: () => TrafficSnapshot;
   rateLimit?: () => LimiterSnapshot;
+  aliases?: () => Array<{ id: string; resolved: string }>;
   runner?: Runner;
   log?: (record: Record<string, unknown>) => void;
 };
@@ -35,6 +37,8 @@ export type ProbeState = {
   history: ProbeRunSummary[];
   traffic: TrafficSnapshot | null;
   rateLimit: LimiterSnapshot | null;
+  aliases: Array<{ id: string; resolved: string }>;
+  analysis: Record<string, ModelAnalysis>;
   scheduler: {
     enabled: boolean;
     intervalMs: number;
@@ -93,6 +97,8 @@ export class ProbeController {
       history,
       traffic: this.options.traffic?.() ?? null,
       rateLimit: this.options.rateLimit?.() ?? null,
+      aliases: this.options.aliases?.() ?? [],
+      analysis: MODEL_ANALYSIS,
       scheduler: {
         enabled: this.started,
         intervalMs: this.options.intervalMs,
