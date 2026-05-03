@@ -12,7 +12,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ProxyAI Probe</title>
   <style>
     /* ─── Tokens ─── */
@@ -103,15 +103,23 @@ export function probePage(boot: ProbePageBoot = {}): string {
       -moz-osx-font-smoothing: grayscale;
       letter-spacing: -0.005em;
       line-height: 1.5;
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-    .wrap { width: min(1200px, calc(100vw - var(--space-6))); margin: 0 auto; }
+    .wrap {
+      width: min(1200px, calc(100% - var(--space-6)));
+      max-width: 100%;
+      margin: 0 auto;
+    }
 
     /* ─── Header ─── */
     header {
       position: sticky;
       top: 0;
       z-index: 50;
+      padding-top: env(safe-area-inset-top, 0px);
       backdrop-filter: saturate(160%) blur(16px);
       -webkit-backdrop-filter: saturate(160%) blur(16px);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
@@ -270,14 +278,32 @@ export function probePage(boot: ProbePageBoot = {}): string {
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-xs);
       overflow: hidden;
+      min-width: 0;
     }
     .panel-head {
       display: flex; align-items: center; justify-content: space-between;
       gap: var(--space-3); padding: var(--space-4) var(--space-4) 0; flex-wrap: wrap;
     }
     .panel-title { font-size: 12px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); margin: 0; }
-    .panel-body { padding: var(--space-3) var(--space-4) var(--space-4); }
-    .panel-body.compact { padding: var(--space-3); }
+    .panel-body { padding: var(--space-3) var(--space-4) var(--space-4); min-width: 0; }
+    .panel-body.compact { padding: var(--space-3); min-width: 0; }
+
+    .split-panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      align-items: stretch;
+      margin-top: 12px;
+    }
+    .panel-head-tools {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: 1 1 auto;
+      min-width: 0;
+      justify-content: flex-end;
+    }
 
     /* ─── Rate limit ─── */
     .rate-panel { margin-top: var(--space-3); }
@@ -289,7 +315,12 @@ export function probePage(boot: ProbePageBoot = {}): string {
     .rate-hero-left { display: flex; flex-direction: column; gap: 2px; }
     .rate-hero-label { font-size: 11px; text-transform: uppercase; font-weight: 650; letter-spacing: 0.07em; color: var(--text-tertiary); }
     .rate-hero-row { display: flex; align-items: baseline; gap: var(--space-2); }
-    .rate-hero-value { font-size: 30px; font-weight: 600; line-height: 1; letter-spacing: -0.025em; }
+    .rate-hero-value {
+      font-size: clamp(22px, 6vw, 30px);
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -0.025em;
+    }
     .rate-hero-cap { color: var(--text-tertiary); font-size: 15px; font-weight: 500; }
     .rate-hero-pct { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 999px; }
     .rate-meta {
@@ -332,6 +363,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     .tabs {
       display: inline-flex; background: var(--bg-subtle); border: 1px solid var(--border);
       border-radius: var(--radius-md); padding: 2px; gap: 2px;
+      flex-shrink: 0;
     }
     .tabs button {
       background: transparent; border: 0; color: var(--text-tertiary);
@@ -475,13 +507,23 @@ export function probePage(boot: ProbePageBoot = {}): string {
     td.latency-cell { width: 1%; }
 
     /* ─── Scroll / empty ─── */
-    .scroll { overflow: auto; max-height: 460px; margin: 0 -8px; padding: 0 8px; }
+    .scroll {
+      overflow: auto;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      max-height: 460px;
+      margin: 0 -8px;
+      padding: 0 8px;
+      min-width: 0;
+    }
     .empty { color: var(--text-tertiary); padding: var(--space-6) 0; font-size: 12.5px; text-align: center; }
 
     /* ─── Horizontal bars ─── */
     .hbar-list {
       display: flex; flex-direction: column; gap: 3px;
-      max-height: 480px; overflow-y: auto; padding: 4px 2px 4px 0;
+      max-height: 480px; overflow-y: auto; overflow-x: hidden;
+      padding: 4px 2px 4px 0;
+      min-width: 0;
     }
     .hbar-row {
       display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 60px;
@@ -720,22 +762,89 @@ export function probePage(boot: ProbePageBoot = {}): string {
     .catalog-pop-panel td, .catalog-pop-panel th { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: left; }
     .rate-rpm { font-size: 13px; color: var(--text-secondary); margin-left: 8px; }
 
+    @media (hover: none) {
+      tbody tr .copy-btn, .hbar-row .copy-btn { opacity: 1; }
+    }
+
     /* ─── Responsive ─── */
     @media (max-width: 960px) {
       .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .rate-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      .split-panels { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .metric-value { font-size: clamp(20px, 5.5vw, 26px); }
+      .rate-hero-row { flex-wrap: wrap; row-gap: var(--space-1); }
     }
     @media (max-width: 600px) {
       .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .top { flex-wrap: wrap; padding: var(--space-2) 0; }
       .status-pill { max-width: 100%; order: 3; flex-basis: 100%; }
       button.run { width: 100%; justify-content: center; order: 2; }
-      .rate-hero-value { font-size: 24px; }
       .hbar-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 52px; }
       .hbar-axis { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 52px; }
-      .search-input { width: 140px; }
-      .search-input:focus { width: 160px; }
       .live-meta { font-size: 11px; }
+      .panel-head .panel-title { flex: 1 1 100%; }
+      .section-meta {
+        max-width: 100%;
+        flex-basis: 100%;
+      }
+      .panel-head-tools {
+        flex-basis: 100%;
+        justify-content: flex-start;
+        gap: var(--space-2);
+      }
+      .panel-head-tools .search-wrap {
+        flex: 1 1 100%;
+        max-width: 100%;
+      }
+      .panel-head-tools .search-input {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .panel-head-tools .search-input:focus {
+        width: 100%;
+        max-width: 100%;
+      }
+      .panel-head .tabs {
+        max-width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+      }
+      .panel-head .tabs button {
+        flex: 0 0 auto;
+      }
+      .rate-window-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: var(--space-1);
+      }
+      .rate-window { min-width: 380px; }
+      .rate-progress {
+        width: calc(100% - var(--space-6));
+        max-width: 100%;
+        margin-left: var(--space-3);
+        margin-right: var(--space-3);
+      }
+      .catalog-pop-panel {
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+      }
+    }
+    @media (max-width: 480px) {
+      .filter-chips { max-width: 100%; }
+      .panel-head-tools .sort-select {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .rate-stat-value { font-size: 15px; }
     }
   </style>
 </head>
@@ -779,7 +888,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     <section class="panel" style="margin-top:0">
       <div class="panel-head">
         <h2 class="panel-title">Recent client requests</h2>
-        <div style="display:flex;gap:8px;align-items:center;">
+        <div class="panel-head-tools">
           <span class="section-meta muted" id="telemetryMeta"></span>
           <button type="button" class="run" id="copyTelemetryBtn" style="padding:6px 10px;font-size:11px">Copy JSON</button>
         </div>
@@ -821,7 +930,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     <section class="panel" style="margin-top:12px;">
       <div class="panel-head">
         <h2 class="panel-title">NIM catalog</h2>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="panel-head-tools">
           <span class="section-meta" id="catalogMeta"></span>
           <div class="search-wrap" id="catalogSearchWrap">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7 2a5 5 0 013.8 8.2l2.5 2.5a.7.7 0 11-1 1l-2.5-2.5A5 5 0 117 2zm0 1.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor"/></svg>
@@ -843,7 +952,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     <section class="panel" style="margin-top:12px;">
       <div class="panel-head">
         <h2 class="panel-title">Models</h2>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="panel-head-tools">
           <span class="section-meta" id="latestMeta"></span>
           <div class="search-wrap" id="searchWrap">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7 2a5 5 0 013.8 8.2l2.5 2.5a.7.7 0 11-1 1l-2.5-2.5A5 5 0 117 2zm0 1.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor"/></svg>
@@ -883,12 +992,12 @@ export function probePage(boot: ProbePageBoot = {}): string {
       </div>
     </section>
 
-    <section style="margin-top:12px;">
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;">
+    <section>
+      <div class="split-panels">
         <div class="panel">
           <div class="panel-head">
             <h2 class="panel-title">Fastest alive</h2>
-            <div style="display:flex;align-items:center;gap:10px;">
+            <div class="panel-head-tools">
               <span class="section-meta muted" id="fastestMeta"></span>
               <div class="tabs" data-target="fastest">
                 <button type="button" data-mode="chart" class="active">Chart</button>
@@ -901,10 +1010,12 @@ export function probePage(boot: ProbePageBoot = {}): string {
               <div class="hbar-list" id="fastestChart"></div>
             </div>
             <div class="view" data-view="fastest-table" hidden>
-              <table>
-                <thead><tr><th>Model</th><th>Alias</th><th>Latency</th></tr></thead>
-                <tbody id="fastestBody"></tbody>
-              </table>
+              <div class="scroll">
+                <table>
+                  <thead><tr><th>Model</th><th>Alias</th><th>Latency</th></tr></thead>
+                  <tbody id="fastestBody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -1360,9 +1471,12 @@ export function probePage(boot: ProbePageBoot = {}): string {
       const y = rect.top + window.scrollY;
       tooltip.style.left = Math.round(x) + "px";
       tooltip.style.top = Math.round(y) + "px";
-      const tipRect = tooltip.getBoundingClientRect();
+      let tipRect = tooltip.getBoundingClientRect();
       if (tipRect.left < 8) tooltip.style.left = (Math.round(x) + (8 - tipRect.left)) + "px";
       else if (tipRect.right > window.innerWidth - 8) tooltip.style.left = (Math.round(x) - (tipRect.right - window.innerWidth + 8)) + "px";
+      tipRect = tooltip.getBoundingClientRect();
+      if (tipRect.top < 8) tooltip.style.top = (Math.round(y) + (8 - tipRect.top)) + "px";
+      else if (tipRect.bottom > window.innerHeight - 8) tooltip.style.top = (Math.round(y) - (tipRect.bottom - window.innerHeight + 8)) + "px";
     }
     function hideTooltip() { tooltip.hidden = true; }
 

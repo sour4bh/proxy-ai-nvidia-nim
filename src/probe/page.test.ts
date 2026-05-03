@@ -11,3 +11,9 @@ test("probe dashboard maps every result category to an explicit color token", ()
   assert.equal(html.includes('style="background:var(--\' + esc(r.category)'), false);
   assert.equal(html.includes('style="background:var(--\' + k'), false);
 });
+
+test("probe dashboard includes responsive split layout for fastest and history", () => {
+  const html = probePage();
+  assert.match(html, /class="split-panels"/);
+  assert.match(html, /class="panel-head-tools"/);
+});
