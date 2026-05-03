@@ -17,27 +17,40 @@ const requestSchema = z
   .object({ model: z.string(), stream: z.boolean().optional() })
   .passthrough();
 
-export async function chatCompletions(c: Context): Promise<Response> {
-  const id = reqId();
-  const start = Date.now();
+export type UpstreamChatOptions = {
+  inst?: RequestInstrument;
+  reqId: string;
+  start: number;
+  /** Log + telemetry path label (e.g. /v1/chat/completions). */
+  logPath: string;
+  requestedModel: string;
+  resolvedModel: string;
+  stream: boolean;
+  upstreamBody: Record<string, unknown>;
+  /**
+   * When true, successful upstream SSE streams are wrapped with OpenAI chat-shaped error frames.
+   * When false, the raw upstream body is returned for stream=200 (used by /v1/responses adapter).
+   */
+  wrapChatSseErrors: boolean;
+};
+
+/** Shared NIM /chat/completions forward (rate limiter, telemetry, optional SSE error wrapping). */
+export async function upstreamOpenAIChatCompletion(
+  c: Context,
+  opts: UpstreamChatOptions,
+): Promise<Response> {
   const signal = c.req.raw.signal;
-  const inst = instrument(c);
-
-  let raw: unknown;
-  try {
-    raw = await c.req.json();
-  } catch {
-    return c.json(errors.invalidRequest("Body is not valid JSON"), 400);
-  }
-  const parsed = requestSchema.safeParse(raw);
-  if (!parsed.success) {
-    return c.json(errors.invalidRequest("Missing or invalid 'model'"), 400);
-  }
-  const requested = parsed.data.model;
-  const resolved = resolveModel(requested);
-  const stream = parsed.data.stream === true;
-
-  const body = { ...(raw as Record<string, unknown>), model: resolved };
+  const {
+    inst,
+    reqId: id,
+    start,
+    logPath,
+    requestedModel: requested,
+    resolvedModel: resolved,
+    stream,
+    upstreamBody: body,
+    wrapChatSseErrors,
+  } = opts;
 
   const queueEnter = Date.now();
   try {
@@ -48,7 +61,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     if (e instanceof QueueTimeoutError) {
       log({
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         model: requested,
         resolvedModel: resolved,
         status: 429,
@@ -59,7 +72,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
       });
       appendTelemetry(inst, {
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         requestedModel: requested,
         resolvedModel: resolved,
         stream,
@@ -76,7 +89,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     if (e instanceof AbortedError) {
       log({
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         status: 499,
         queueWaitMs,
         totalMs,
@@ -85,7 +98,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
       });
       appendTelemetry(inst, {
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         requestedModel: requested,
         resolvedModel: resolved,
         stream,
@@ -124,7 +137,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     if (timeoutSignal.aborted) {
       log({
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         model: requested,
         resolvedModel: resolved,
         status: 504,
@@ -136,7 +149,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
       });
       appendTelemetry(inst, {
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         requestedModel: requested,
         resolvedModel: resolved,
         stream,
@@ -152,7 +165,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     if (signal.aborted) {
       log({
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         status: 499,
         queueWaitMs,
         upstreamMs,
@@ -162,7 +175,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
       });
       appendTelemetry(inst, {
         reqId: id,
-        path: "/v1/chat/completions",
+        path: logPath,
         requestedModel: requested,
         resolvedModel: resolved,
         stream,
@@ -178,7 +191,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     }
     log({
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       model: requested,
       resolvedModel: resolved,
       status: 502,
@@ -190,7 +203,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     });
     appendTelemetry(inst, {
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       requestedModel: requested,
       resolvedModel: resolved,
       stream,
@@ -208,12 +221,12 @@ export async function chatCompletions(c: Context): Promise<Response> {
 
   if (!stream) {
     const rawText = await upstream.text();
-    const { body, contentType } = ensureOpenAIShape(rawText, upstream);
+    const { body: outBody, contentType } = ensureOpenAIShape(rawText, upstream);
     const upstreamMs = Date.now() - upstreamStart;
     const totalMs = Date.now() - start;
     log({
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       model: requested,
       resolvedModel: resolved,
       status: upstream.status,
@@ -222,12 +235,12 @@ export async function chatCompletions(c: Context): Promise<Response> {
       upstreamMs,
       totalMs,
       stream: false,
-      usage: extractUsage(body),
+      usage: extractUsage(outBody),
       upstream429: upstream.status === 429,
     });
     appendTelemetry(inst, {
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       requestedModel: requested,
       resolvedModel: resolved,
       stream: false,
@@ -236,7 +249,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
       totalMs,
       phase: upstream.status >= 400 ? "upstream_error" : "completed",
     });
-    const r = new Response(body, { status: upstream.status });
+    const r = new Response(outBody, { status: upstream.status });
     r.headers.set("Content-Type", contentType);
     if (upstream.status === 429) r.headers.set("Retry-After", retryAfter(upstream));
     r.headers.set("x-request-id", id);
@@ -245,12 +258,12 @@ export async function chatCompletions(c: Context): Promise<Response> {
 
   if (upstream.status !== 200 || !upstream.body) {
     const rawText = await upstream.text();
-    const { body, contentType } = ensureOpenAIShape(rawText, upstream);
+    const { body: outBody, contentType } = ensureOpenAIShape(rawText, upstream);
     const upstreamMs = Date.now() - upstreamStart;
     const totalMs = Date.now() - start;
     log({
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       model: requested,
       resolvedModel: resolved,
       status: upstream.status,
@@ -262,7 +275,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     });
     appendTelemetry(inst, {
       reqId: id,
-      path: "/v1/chat/completions",
+      path: logPath,
       requestedModel: requested,
       resolvedModel: resolved,
       stream: true,
@@ -271,27 +284,29 @@ export async function chatCompletions(c: Context): Promise<Response> {
       totalMs,
       phase: "stream_request_rejected",
     });
-    const r = new Response(body, { status: upstream.status });
+    const r = new Response(outBody, { status: upstream.status });
     r.headers.set("Content-Type", contentType);
     if (upstream.status === 429) r.headers.set("Retry-After", retryAfter(upstream));
     r.headers.set("x-request-id", id);
     return r;
   }
 
-  const wrapped = wrapStreamWithErrorFrame(upstream.body, id, {
-    inst,
-    reqId: id,
-    path: "/v1/chat/completions",
-    requestedModel: requested,
-    resolvedModel: resolved,
-    queueWaitMs,
-    start,
-  });
+  const bodyStream = wrapChatSseErrors
+    ? wrapStreamWithErrorFrame(upstream.body, id, {
+        inst,
+        reqId: id,
+        path: logPath,
+        requestedModel: requested,
+        resolvedModel: resolved,
+        queueWaitMs,
+        start,
+      })
+    : upstream.body;
   const upstreamMs = Date.now() - upstreamStart;
   const totalMs = Date.now() - start;
   log({
     reqId: id,
-    path: "/v1/chat/completions",
+    path: logPath,
     model: requested,
     resolvedModel: resolved,
     status: 200,
@@ -303,7 +318,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
   });
   appendTelemetry(inst, {
     reqId: id,
-    path: "/v1/chat/completions",
+    path: logPath,
     requestedModel: requested,
     resolvedModel: resolved,
     stream: true,
@@ -312,7 +327,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
     totalMs: upstreamMs,
     phase: "stream_open",
   });
-  return new Response(wrapped, {
+  return new Response(bodyStream, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream",
@@ -320,6 +335,40 @@ export async function chatCompletions(c: Context): Promise<Response> {
       Connection: "keep-alive",
       "x-request-id": id,
     },
+  });
+}
+
+export async function chatCompletions(c: Context): Promise<Response> {
+  const id = reqId();
+  const start = Date.now();
+  const inst = instrument(c);
+
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    return c.json(errors.invalidRequest("Body is not valid JSON"), 400);
+  }
+  const parsed = requestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return c.json(errors.invalidRequest("Missing or invalid 'model'"), 400);
+  }
+  const requested = parsed.data.model;
+  const resolved = resolveModel(requested);
+  const stream = parsed.data.stream === true;
+
+  const body = { ...(raw as Record<string, unknown>), model: resolved };
+
+  return upstreamOpenAIChatCompletion(c, {
+    inst,
+    reqId: id,
+    start,
+    logPath: "/v1/chat/completions",
+    requestedModel: requested,
+    resolvedModel: resolved,
+    stream,
+    upstreamBody: body,
+    wrapChatSseErrors: true,
   });
 }
 

@@ -12,6 +12,7 @@ import { ProbeController } from "./probe/controller.ts";
 import { mountProbeRoutes } from "./probe/routes.ts";
 import { TrafficMonitor } from "./traffic.ts";
 import { TelemetryStore, setTelemetryStore } from "./telemetry.ts";
+import { openaiResponses } from "./responses.ts";
 
 const app = new Hono();
 const traffic = new TrafficMonitor();
@@ -65,6 +66,7 @@ mountProbeRoutes(app, {
 
 app.get("/v1/models", listModels);
 app.post("/v1/chat/completions", (c) => traffic.track(() => chatCompletions(c)));
+app.post("/v1/responses", (c) => traffic.track(() => openaiResponses(c)));
 app.post("/v1/messages", (c) => traffic.track(() => messages(c)));
 app.post("/v1/embeddings", (c) => c.json(errors.notImplemented("/v1/embeddings"), 501));
 app.post("/v1/completions", (c) => c.json(errors.notImplemented("/v1/completions"), 501));

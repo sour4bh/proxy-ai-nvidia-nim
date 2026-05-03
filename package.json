@@ -33,7 +33,8 @@
     "start": "tsx --env-file=.env src/server.ts",
     "probe": "tsx --env-file=.env src/probe.ts",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke:clis": "bash scripts/cli-smoke.sh"
   },
   "engines": {
     "node": ">=20.0.0",
