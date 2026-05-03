@@ -722,6 +722,10 @@ export function probePage(boot: ProbePageBoot = {}): string {
     /* ─── Section meta ─── */
     .section-meta { color: var(--text-tertiary); font-size: 11.5px; display: inline-flex; align-items: center; gap: 6px; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .muted { color: var(--text-tertiary); }
+    .alias-meta-wrap { white-space: normal; max-width: min(560px, 100%); overflow: visible; text-overflow: unset; align-items: baseline; flex-wrap: wrap; row-gap: 4px; }
+    code.mono-muted { font-size: 11px; color: var(--text-secondary); font-family: ui-monospace, monospace; }
+    .cfg-path { word-break: break-all; }
+    .disk-json-warn { color: var(--error); font-size: 11px; font-weight: 600; }
 
     /* ─── Config foot ─── */
     .config-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; color: var(--text-tertiary); padding: var(--space-3) var(--space-4); }
@@ -1060,7 +1064,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     <section class="panel" style="margin-top:12px;">
       <div class="panel-head">
         <h2 class="panel-title">Model aliases</h2>
-        <span class="section-meta muted" id="aliasMeta"></span>
+        <span class="section-meta muted alias-meta-wrap" id="aliasMeta"></span>
       </div>
       <div class="panel-body compact">
         <div class="scroll">
@@ -1176,6 +1180,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
     let aliasFilter = "all";
     let lastState = null;
     let aliasMap = {};
+    let persistedProbeConfig = { path: "", parseError: null };
     let selectedAliasTargetModel = "";
     let catalogQuery = "";
     let lastCatalog = null;
@@ -1702,12 +1707,25 @@ export function probePage(boot: ProbePageBoot = {}): string {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || "Update failed");
       aliasMap = Object.fromEntries((body.aliases || []).map((entry) => [entry.id, entry.resolved]));
+      if (typeof body.configPath === "string" && body.configPath) {
+        persistedProbeConfig = { path: body.configPath, parseError: null };
+      }
     }
 
     function renderAliases(state) {
       const entries = (state.aliases || []).slice().sort((a, b) => a.id.localeCompare(b.id));
       aliasMap = Object.fromEntries(entries.map((entry) => [entry.id, entry.resolved]));
-      aliasMeta.textContent = entries.length ? entries.length + " configured" : "none configured";
+      const metaParts = [];
+      metaParts.push(entries.length ? entries.length + " configured" : "none configured");
+      if (persistedProbeConfig.path) {
+        const p = persistedProbeConfig.path;
+        const short = p.length > 56 ? "\u2026" + p.slice(-52) : p;
+        metaParts.push(
+          'file <code class="mono-muted cfg-path" title="' + esc(p) + '">' + esc(short) + "</code>",
+        );
+        if (persistedProbeConfig.parseError) metaParts.push('<span class="disk-json-warn">invalid JSON on disk</span>');
+      }
+      aliasMeta.innerHTML = metaParts.join(" · ");
       if (entries.length) {
         aliasTableBody.innerHTML = entries.map((entry) => {
           return '<tr>'
@@ -1877,8 +1895,22 @@ export function probePage(boot: ProbePageBoot = {}): string {
     window.addEventListener("scroll", hideTooltip, true);
 
     async function load() {
-      const res = await fetch("/probe/state");
-      render(await res.json());
+      const [stateRes, cfgRes] = await Promise.all([
+        fetch("/probe/state"),
+        fetch("/probe/config"),
+      ]);
+      if (cfgRes.ok) {
+        try {
+          const cfg = await cfgRes.json();
+          persistedProbeConfig = {
+            path: typeof cfg.path === "string" ? cfg.path : "",
+            parseError: typeof cfg.parseError === "string" ? cfg.parseError : null,
+          };
+        } catch {
+          persistedProbeConfig = { path: "", parseError: null };
+        }
+      }
+      render(await stateRes.json());
     }
 
     runBtn.addEventListener("click", async () => {

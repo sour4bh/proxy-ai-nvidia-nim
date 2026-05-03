@@ -10,6 +10,8 @@ import type { TelemetryStore } from "../telemetry.ts";
 import { buildProbeCatalog } from "./catalog.ts";
 import { loadModelSeen, mergeCatalogSnapshot, saveModelSeen } from "./model-seen.ts";
 import type { ProbeHistory } from "./history.ts";
+import { getPersistedConfigSnapshot, mergeWritePersistedAliases } from "../persisted-config.ts";
+import { log } from "../log.ts";
 
 function isAliasMap(input: unknown): input is Record<string, string> {
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
@@ -105,6 +107,14 @@ export function mountProbeRoutes(app: Hono, deps: ProbeRoutesMount): void {
 
   app.get("/probe/aliases", (c) => c.json({ aliases: aliasEntries() }));
 
+  app.get("/probe/config", (c) => {
+    try {
+      return c.json(getPersistedConfigSnapshot());
+    } catch {
+      return c.json({ error: "config_unavailable" }, 500);
+    }
+  });
+
   app.put("/probe/aliases", async (c) => {
     let body: unknown;
     try {
@@ -116,8 +126,27 @@ export function mountProbeRoutes(app: Hono, deps: ProbeRoutesMount): void {
     if (!isAliasMap(aliases)) {
       return c.json({ error: "aliases must be an object of non-empty key/value strings" }, 400);
     }
-    updateAliases(aliases);
-    return c.json({ updated: true, aliases: aliasEntries() });
+    const prev = Object.fromEntries(aliasEntries().map((e) => [e.id, e.resolved]));
+    try {
+      updateAliases(aliases);
+      mergeWritePersistedAliases(aliases);
+    } catch (e) {
+      updateAliases(prev);
+      const msg = e instanceof Error ? e.message : String(e);
+      log({ event: "persisted_config_write_failed", error: msg });
+      return c.json({ error: "persist_failed", message: msg }, 500);
+    }
+    let configPath = "";
+    try {
+      configPath = getPersistedConfigSnapshot().path;
+    } catch {
+      /* */
+    }
+    return c.json({
+      updated: true,
+      aliases: aliasEntries(),
+      configPath,
+    });
   });
 
   app.post("/probe/run", (c) => {

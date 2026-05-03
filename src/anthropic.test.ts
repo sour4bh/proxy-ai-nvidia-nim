@@ -177,6 +177,69 @@ test("Anthropic messages still translates text, tool_use, and tool_result blocks
   ]);
 });
 
+test("Anthropic messages clamps max_tokens to MAX_COMPLETION_TOKENS_CAP", async () => {
+  const capture: { body?: Record<string, unknown> } = {};
+  await withMessagesApp(
+    async (_url, init) => {
+      capture.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return upstreamJson();
+    },
+    async (app) => {
+      const res = await app.request("/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet",
+          max_tokens: 200_000,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+      assert.equal(res.status, 200);
+    },
+  );
+
+  assert.equal(capture.body?.max_tokens, 8192);
+});
+
+test("Anthropic messages retries once when upstream reports context completion overflow", async () => {
+  let calls = 0;
+  const seenMax: number[] = [];
+  await withMessagesApp(
+    async (_url, init) => {
+      calls++;
+      const b = JSON.parse(String(init?.body)) as { max_tokens: number };
+      seenMax.push(b.max_tokens);
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message:
+                "maximum context length is 8192 tokens, but you sent 7000 input tokens and max_tokens is too large",
+            },
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return upstreamJson();
+    },
+    async (app) => {
+      const res = await app.request("/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+      assert.equal(res.status, 200);
+    },
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(seenMax[0], 8096);
+  assert.equal(seenMax[1], 680);
+});
+
 test("Anthropic streaming cancellation cancels the upstream reader", async () => {
   let cancelReason: unknown;
   const upstream = new ReadableStream<Uint8Array>({

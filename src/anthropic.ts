@@ -194,7 +194,103 @@ function translateToolChoice(tc: unknown): unknown {
   return undefined;
 }
 
-function buildOAIRequest(body: AnthropicRequest, resolvedModel: string): Record<string, unknown> {
+function roughInputTokensFromJsonPayload(payload: Record<string, unknown>): number {
+  return Math.ceil(JSON.stringify(payload).length / 4);
+}
+
+function clampOutboundMaxCompletionTokens(desiredRaw: number, estimationPayload: Record<string, unknown>): number {
+  const desired = Number.isFinite(desiredRaw) && desiredRaw > 0 ? desiredRaw : 1;
+  const estimatedInputTokens = roughInputTokensFromJsonPayload(estimationPayload);
+  const ctx = config.anthropicUpstreamContextTokensFallback;
+  const margin = config.anthropicCompletionSafetyMarginTokens;
+  const ceiling = Math.max(1, ctx - estimatedInputTokens - margin);
+  return Math.max(1, Math.min(desired, config.maxCompletionTokensCap, ceiling));
+}
+
+function upstreamErrorBodyMessage(rawText: string): string {
+  try {
+    const j = JSON.parse(rawText) as { error?: { message?: string } };
+    if (j.error?.message) return j.error.message;
+  } catch { /**/ }
+  return "";
+}
+
+function isLikelyCompletionBudgetOverflow(message: string): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return (
+    m.includes("maximum context length") ||
+    m.includes("context length") ||
+    m.includes("max_tokens") ||
+    m.includes("max completion tokens") ||
+    m.includes("too many tokens") ||
+    (m.includes("maximum") && m.includes("token") && (m.includes("completion") || m.includes("requested")))
+  );
+}
+
+function parseCompletionBudgetFromUpstreamError(errorMessage: string): number | undefined {
+  let contextLimit: number | undefined;
+  const ctxMatch =
+    /maximum\s+context\s+(?:length|size)\s+is\s+(\d+)/i.exec(errorMessage)
+    ?? /context\s+(?:limit|window)\s+of\s+(\d+)/i.exec(errorMessage);
+  if (ctxMatch && Number.isFinite(Number(ctxMatch[1]))) {
+    contextLimit = Number(ctxMatch[1]);
+  }
+
+  let inputTokens: number | undefined;
+  for (const re of [
+    /messages\s+(?:have\s+|result(?:ed)?\s+in\s+)?(\d+)\s+tokens?/i,
+    /(\d+)\s+tokens?\s+in\s+the\s+messages/i,
+    /(\d+)\s*prompt\s+tokens?/i,
+    /\b(?:input|prompt)\s+tokens?[:\s]+(\d+)/i,
+    /\b(\d+)\s+input\s+tokens?\b/i,
+    /\((\d+)\s+[^\d\s]{0,20}\s*i(?:n\s+)?nput[^)]*\)/i,
+  ]) {
+    const im = re.exec(errorMessage);
+    if (im && Number.isFinite(Number(im[1]))) {
+      inputTokens = Number(im[1]);
+      break;
+    }
+  }
+
+  if (typeof contextLimit === "number" && typeof inputTokens === "number") {
+    return Math.max(1, contextLimit - inputTokens - config.anthropicCompletionSafetyMarginTokens);
+  }
+  const rangeHint = /\bsupports\s+at\s+most\s+(\d+)\s+tokens?/i.exec(errorMessage);
+  const msgTok = /\b(\d+)\s+in\s+the\s+messages\b/i.exec(errorMessage);
+  if (
+    rangeHint
+    && msgTok
+    && Number.isFinite(Number(rangeHint[1]))
+    && Number.isFinite(Number(msgTok[1]))
+  ) {
+    return Math.max(
+      1,
+      Number(rangeHint[1]) - Number(msgTok[1]) - config.anthropicCompletionSafetyMarginTokens,
+    );
+  }
+  return undefined;
+}
+
+function nextMaxTokensAfterUpstreamOverflow(
+  current: number,
+  errorMessage: string,
+  estimationPayload: Record<string, unknown>,
+): number | undefined {
+  const narrowed = clampOutboundMaxCompletionTokens(
+    parseCompletionBudgetFromUpstreamError(errorMessage) ?? Math.max(1, Math.floor(current / 2)),
+    estimationPayload,
+  );
+  if (narrowed < current) return narrowed;
+  if (current <= 1) return undefined;
+  const stepDown = Math.max(1, current - 1);
+  return stepDown < current ? stepDown : undefined;
+}
+
+function buildTranslatedOaiParts(body: AnthropicRequest, resolvedModel: string): {
+  oaiBody: Record<string, unknown>;
+  estimationPayload: Record<string, unknown>;
+} {
   const messages = translateMessages(
     normalizeMessages(body.messages),
     extractSystem(body.system),
@@ -202,19 +298,26 @@ function buildOAIRequest(body: AnthropicRequest, resolvedModel: string): Record<
   const tools = translateTools(body.tools);
   const toolChoice = translateToolChoice(body.tool_choice);
 
-  const req: Record<string, unknown> = {
+  const estimationPayload: Record<string, unknown> = {
     model: resolvedModel,
     messages,
-    max_tokens: body.max_tokens ?? 8096,
+    ...(tools ? { tools } : {}),
+    ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    ...(body.stop_sequences !== undefined ? { stop: body.stop_sequences } : {}),
+    ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+    ...(body.top_p !== undefined ? { top_p: body.top_p } : {}),
+  };
+
+  const desiredMax = body.max_tokens ?? 8096;
+  const maxTokens = clampOutboundMaxCompletionTokens(desiredMax, estimationPayload);
+
+  const oaiBody: Record<string, unknown> = {
+    ...estimationPayload,
+    max_tokens: maxTokens,
     stream: body.stream ?? false,
   };
-  if (body.stream === true) req.stream_options = { include_usage: true };
-  if (body.temperature !== undefined) req.temperature = body.temperature;
-  if (body.top_p !== undefined) req.top_p = body.top_p;
-  if (body.stop_sequences !== undefined) req.stop = body.stop_sequences;
-  if (tools) req.tools = tools;
-  if (toolChoice !== undefined) req.tool_choice = toolChoice;
-  return req;
+  if (body.stream === true) oaiBody.stream_options = { include_usage: true };
+  return { oaiBody, estimationPayload };
 }
 
 // --- Response translation: OpenAI → Anthropic ---
@@ -519,8 +622,11 @@ export async function messages(c: Context): Promise<Response> {
   const isStream = body.stream === true;
 
   let oaiBody: Record<string, unknown>;
+  let estimationPayload: Record<string, unknown>;
   try {
-    oaiBody = buildOAIRequest(body, resolved);
+    const built = buildTranslatedOaiParts(body, resolved);
+    oaiBody = built.oaiBody;
+    estimationPayload = built.estimationPayload;
   } catch (e) {
     if (e instanceof InvalidAnthropicRequestError) {
       return err("invalid_request_error", e.message, 400);
@@ -575,17 +681,58 @@ export async function messages(c: Context): Promise<Response> {
   const fetchSignal = AbortSignal.any([signal, timeoutSignal]);
   let upstream: Response;
   const upstreamStart = Date.now();
+  const nimChatUrl = `${config.nimBaseUrl}/chat/completions`;
   try {
-    upstream = await fetch(`${config.nimBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.nimApiKey}`,
-        "Content-Type": "application/json",
-        Accept: isStream ? "text/event-stream" : "application/json",
-      },
-      body: JSON.stringify(oaiBody),
-      signal: fetchSignal,
-    });
+    const doFetch = () =>
+      fetch(nimChatUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.nimApiKey}`,
+          "Content-Type": "application/json",
+          Accept: isStream ? "text/event-stream" : "application/json",
+        },
+        body: JSON.stringify(oaiBody),
+        signal: fetchSignal,
+      });
+
+    upstream = await doFetch();
+
+    const upstreamRejected =
+      (!isStream && !upstream.ok) || (isStream && (upstream.status !== 200 || !upstream.body));
+    if (upstreamRejected) {
+      const rawErrText = await upstream.text();
+      if (
+        config.anthropicRetryMaxTokensOverflow
+        && typeof oaiBody.max_tokens === "number"
+      ) {
+        const extracted = upstreamErrorBodyMessage(rawErrText);
+        if (isLikelyCompletionBudgetOverflow(extracted)) {
+          const nextMt = nextMaxTokensAfterUpstreamOverflow(oaiBody.max_tokens, extracted, estimationPayload);
+          if (nextMt !== undefined && nextMt < oaiBody.max_tokens) {
+            oaiBody = { ...oaiBody, max_tokens: nextMt };
+            upstream = await doFetch();
+          } else {
+            upstream = new Response(rawErrText, {
+              status: upstream.status,
+              statusText: upstream.statusText,
+              headers: upstream.headers,
+            });
+          }
+        } else {
+          upstream = new Response(rawErrText, {
+            status: upstream.status,
+            statusText: upstream.statusText,
+            headers: upstream.headers,
+          });
+        }
+      } else {
+        upstream = new Response(rawErrText, {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers: upstream.headers,
+        });
+      }
+    }
   } catch (e) {
     const totalMs = Date.now() - start;
     const upstreamMs = Date.now() - upstreamStart;

@@ -64,6 +64,8 @@ export const config = {
   probeIntervalMs: int("PROBE_INTERVAL_MS", 21_600_000),
   probeHistoryLimit: int("PROBE_HISTORY_LIMIT", 30),
   probeHistoryDir: text("PROBE_HISTORY_DIR", ".probe-history"),
+  /** JSON file merged at runtime (aliases + optional future keys). Editable via SSH or PUT /probe/aliases. */
+  persistedConfigFile: text("PROXYAI_CONFIG_FILE", "config.json"),
   probeTimeoutMs: int("PROBE_TIMEOUT_MS", 30_000),
   probeConcurrency: int("PROBE_CONCURRENCY", 3),
   probeClientQuietMs: int("PROBE_CLIENT_QUIET_MS", 30_000),
@@ -77,4 +79,8 @@ export const config = {
     const h = (process.env.PROXY_HOST ?? "127.0.0.1").trim().toLowerCase();
     return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
   })(),
+  maxCompletionTokensCap: int("MAX_COMPLETION_TOKENS_CAP", 8192),
+  anthropicCompletionSafetyMarginTokens: int("ANTHROPIC_COMPLETION_SAFETY_MARGIN_TOKENS", 512),
+  anthropicUpstreamContextTokensFallback: int("ANTHROPIC_UPSTREAM_CONTEXT_TOKENS", 131072),
+  anthropicRetryMaxTokensOverflow: bool("ANTHROPIC_RETRY_MAX_TOKENS_OVERFLOW", true),
 } as const;

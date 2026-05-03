@@ -7,6 +7,7 @@ import { listModels, loadUpstreamModels } from "./models.ts";
 import { aliasEntries } from "./aliases.ts";
 import { errors } from "./errors.ts";
 import { log } from "./log.ts";
+import { bootstrapPersistedConfig } from "./persisted-config.ts";
 import { ProbeHistory } from "./probe/history.ts";
 import { ProbeController } from "./probe/controller.ts";
 import { mountProbeRoutes } from "./probe/routes.ts";
@@ -19,6 +20,12 @@ const traffic = new TrafficMonitor();
 const probeHistory = new ProbeHistory(config.probeHistoryDir, config.probeHistoryLimit);
 const telemetry = new TelemetryStore(config.probeTelemetryMax, config.probeTelemetryEnabled);
 setTelemetryStore(telemetry);
+
+bootstrapPersistedConfig({
+  path: config.persistedConfigFile,
+  log,
+  cliAliases: config.aliases,
+});
 
 const probeController = new ProbeController({
   history: probeHistory,
@@ -85,6 +92,7 @@ serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => 
     maxQueueWaitMs: config.maxQueueWaitMs,
     upstreamTimeoutMs: config.upstreamTimeoutMs,
     aliases: Object.fromEntries(aliasEntries().map((entry) => [entry.id, entry.resolved])),
+    persistedConfigFile: config.persistedConfigFile,
     ...(config.proxyPublicUrl ? { proxyPublicUrl: config.proxyPublicUrl } : {}),
   });
   probeController.startScheduler();

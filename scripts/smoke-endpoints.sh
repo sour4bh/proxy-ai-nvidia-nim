@@ -41,6 +41,9 @@ fi
 c=$(code "$BASE/probe/aliases")
 [[ "$c" == "200" ]] && jq -e .aliases >/dev/null 2>&1 </tmp/smoke_body && pass "GET /probe/aliases ($c)" || failx "GET /probe/aliases" "got $c or bad shape"
 
+c=$(code "$BASE/probe/config")
+[[ "$c" == "200" ]] && jq -e '(.path | type) == "string"' >/dev/null 2>&1 </tmp/smoke_body && pass "GET /probe/config ($c)" || failx "GET /probe/config" "got $c or bad shape"
+
 c=$(code -X PUT "$BASE/probe/aliases" -H 'Content-Type: application/json' -d '{"aliases":{"__smoke__":"__smoke_target__"}}')
 if [[ "$c" == "200" ]]; then
   pass "PUT /probe/aliases set smoke alias ($c)"

@@ -32,7 +32,7 @@
     "agent": "tsx --env-file=.env src/agent.ts",
     "start": "tsx --env-file=.env src/server.ts",
     "probe": "tsx --env-file=.env src/probe.ts",
-    "test": "tsx --test src/*.test.ts src/**/*.test.ts",
+    "test": "NVIDIA_NIM_API_KEY=test_placeholder tsx --test src/*.test.ts src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "smoke:clis": "bash scripts/cli-smoke.sh"
   },
