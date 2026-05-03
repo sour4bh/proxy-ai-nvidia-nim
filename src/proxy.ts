@@ -5,6 +5,7 @@ import { resolveModel } from "./aliases.ts";
 import { Limiter, QueueTimeoutError, AbortedError } from "./limiter.ts";
 import { errors, openaiError } from "./errors.ts";
 import { log, reqId } from "./log.ts";
+import { appendTelemetry, instrument, type RequestInstrument } from "./telemetry.ts";
 
 export const limiter = new Limiter(
   config.rateCapacity,
@@ -20,6 +21,7 @@ export async function chatCompletions(c: Context): Promise<Response> {
   const id = reqId();
   const start = Date.now();
   const signal = c.req.raw.signal;
+  const inst = instrument(c);
 
   let raw: unknown;
   try {
@@ -55,6 +57,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
         stream,
         reason: "queue_timeout",
       });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/chat/completions",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream,
+        queueWaitMs,
+        upstreamStatus: 429,
+        totalMs,
+        phase: "queue_timeout",
+      });
       const r = c.json(errors.queueTimeout(e.waitedMs), 429);
       r.headers.set("Retry-After", "5");
       r.headers.set("x-request-id", id);
@@ -69,6 +82,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
         totalMs,
         stream,
         reason: "client_aborted_in_queue",
+      });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/chat/completions",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream,
+        queueWaitMs,
+        upstreamStatus: 499,
+        totalMs,
+        phase: "client_aborted_in_queue",
       });
       return new Response(JSON.stringify(errors.clientAborted()), {
         status: 499,
@@ -110,6 +134,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
         stream,
         reason: "upstream_timeout",
       });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/chat/completions",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream,
+        queueWaitMs,
+        upstreamStatus: 504,
+        totalMs,
+        phase: "upstream_timeout",
+      });
       const r = c.json(errors.upstreamTimeout(config.upstreamTimeoutMs), 504);
       r.headers.set("x-request-id", id);
       return r;
@@ -124,6 +159,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
         totalMs,
         stream,
         reason: "client_aborted_upstream",
+      });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/chat/completions",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream,
+        queueWaitMs,
+        upstreamStatus: 499,
+        totalMs,
+        phase: "client_aborted_upstream",
       });
       return new Response(JSON.stringify(errors.clientAborted()), {
         status: 499,
@@ -141,6 +187,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
       totalMs,
       stream,
       error: (e as Error).message,
+    });
+    appendTelemetry(inst, {
+      reqId: id,
+      path: "/v1/chat/completions",
+      requestedModel: requested,
+      resolvedModel: resolved,
+      stream,
+      queueWaitMs,
+      upstreamStatus: 502,
+      totalMs,
+      phase: "upstream_fetch_error",
     });
     return c.json(errors.upstreamUnavailable((e as Error).message), 502);
   }
@@ -168,6 +225,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
       usage: extractUsage(body),
       upstream429: upstream.status === 429,
     });
+    appendTelemetry(inst, {
+      reqId: id,
+      path: "/v1/chat/completions",
+      requestedModel: requested,
+      resolvedModel: resolved,
+      stream: false,
+      queueWaitMs,
+      upstreamStatus: upstream.status,
+      totalMs,
+      phase: upstream.status >= 400 ? "upstream_error" : "completed",
+    });
     const r = new Response(body, { status: upstream.status });
     r.headers.set("Content-Type", contentType);
     if (upstream.status === 429) r.headers.set("Retry-After", retryAfter(upstream));
@@ -192,6 +260,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
       stream: true,
       reason: "stream_request_rejected",
     });
+    appendTelemetry(inst, {
+      reqId: id,
+      path: "/v1/chat/completions",
+      requestedModel: requested,
+      resolvedModel: resolved,
+      stream: true,
+      queueWaitMs,
+      upstreamStatus: upstream.status,
+      totalMs,
+      phase: "stream_request_rejected",
+    });
     const r = new Response(body, { status: upstream.status });
     r.headers.set("Content-Type", contentType);
     if (upstream.status === 429) r.headers.set("Retry-After", retryAfter(upstream));
@@ -199,7 +278,15 @@ export async function chatCompletions(c: Context): Promise<Response> {
     return r;
   }
 
-  const wrapped = wrapStreamWithErrorFrame(upstream.body, id);
+  const wrapped = wrapStreamWithErrorFrame(upstream.body, id, {
+    inst,
+    reqId: id,
+    path: "/v1/chat/completions",
+    requestedModel: requested,
+    resolvedModel: resolved,
+    queueWaitMs,
+    start,
+  });
   const upstreamMs = Date.now() - upstreamStart;
   const totalMs = Date.now() - start;
   log({
@@ -213,6 +300,17 @@ export async function chatCompletions(c: Context): Promise<Response> {
     upstreamMs,
     totalMs,
     stream: true,
+  });
+  appendTelemetry(inst, {
+    reqId: id,
+    path: "/v1/chat/completions",
+    requestedModel: requested,
+    resolvedModel: resolved,
+    stream: true,
+    queueWaitMs,
+    upstreamStatus: 200,
+    totalMs: upstreamMs,
+    phase: "stream_open",
   });
   return new Response(wrapped, {
     status: 200,
@@ -268,14 +366,28 @@ function extractUsage(body: string): unknown {
   }
 }
 
+type StreamErrorTelemetry = {
+  inst?: RequestInstrument;
+  reqId: string;
+  path: string;
+  requestedModel: string;
+  resolvedModel: string;
+  queueWaitMs: number;
+  start: number;
+};
+
 function wrapStreamWithErrorFrame(
   upstream: ReadableStream<Uint8Array>,
   id: string,
+  tel?: StreamErrorTelemetry,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let canceled = false;
+  let catchError = false;
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      const reader = upstream.getReader();
+      reader = upstream.getReader();
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -283,20 +395,60 @@ function wrapStreamWithErrorFrame(
           if (value) controller.enqueue(value);
         }
       } catch (e) {
+        catchError = true;
+        if (canceled) return;
         const err = openaiError(
           `Upstream error mid-stream: ${(e as Error).message}`,
           "upstream_error",
           "stream_interrupted",
         );
         controller.enqueue(encoder.encode(`\ndata: ${JSON.stringify(err)}\n\ndata: [DONE]\n\n`));
+        appendTelemetry(tel?.inst, {
+          reqId: tel?.reqId ?? id,
+          path: tel?.path ?? "/v1/chat/completions",
+          requestedModel: tel?.requestedModel ?? "",
+          resolvedModel: tel?.resolvedModel ?? "",
+          stream: true,
+          queueWaitMs: tel?.queueWaitMs,
+          upstreamStatus: 200,
+          totalMs: tel ? Date.now() - tel.start : undefined,
+          phase: "stream_interrupted",
+        });
         log({ event: "stream_interrupted", reqId: id, error: (e as Error).message });
       } finally {
-        controller.close();
-        reader.releaseLock();
+        if (tel?.inst && !canceled && !catchError) {
+          appendTelemetry(tel.inst, {
+            reqId: tel.reqId,
+            path: tel.path,
+            requestedModel: tel.requestedModel,
+            resolvedModel: tel.resolvedModel,
+            stream: true,
+            queueWaitMs: tel.queueWaitMs,
+            upstreamStatus: 200,
+            totalMs: Date.now() - tel.start,
+            phase: "stream_done",
+          });
+        }
+        if (!canceled) controller.close();
+        reader?.releaseLock();
       }
     },
-    cancel() {
-      upstream.cancel().catch(() => {});
+    cancel(reason) {
+      canceled = true;
+      if (tel?.inst) {
+        appendTelemetry(tel.inst, {
+          reqId: tel.reqId,
+          path: tel.path,
+          requestedModel: tel.requestedModel,
+          resolvedModel: tel.resolvedModel,
+          stream: true,
+          queueWaitMs: tel.queueWaitMs,
+          upstreamStatus: 200,
+          totalMs: Date.now() - tel.start,
+          phase: "stream_canceled",
+        });
+      }
+      return reader?.cancel(reason) ?? upstream.cancel(reason);
     },
   });
 }

@@ -29,6 +29,10 @@ export class ProbeHistory {
     return runs.map((run) => summarizeRun(run));
   }
 
+  async listRuns(): Promise<ProbeRun[]> {
+    return this.runs();
+  }
+
   private async runs(): Promise<ProbeRun[]> {
     let files: string[];
     try {

@@ -4,6 +4,8 @@ import { countResults, emptyCounts, type ProbeRun, type ProbeRunSource, type Pro
 import type { ProbePauseState, TrafficSnapshot } from "../traffic.ts";
 import type { LimiterSnapshot } from "../limiter.ts";
 import { MODEL_ANALYSIS, type ModelAnalysis } from "./analysis.ts";
+import { loadModelSeen, saveModelSeen, touchProbeModels } from "./model-seen.ts";
+import type { TelemetryEntry } from "../telemetry.ts";
 
 type Runner = (options: ProbeRunnerOptions) => Promise<ProbeRun>;
 
@@ -27,6 +29,10 @@ type ProbeControllerOptions = {
   aliases?: () => Array<{ id: string; resolved: string }>;
   runner?: Runner;
   log?: (record: Record<string, unknown>) => void;
+  telemetry?: () => { recent: TelemetryEntry[]; max: number };
+  proxyPublicUrl?: string;
+  listenNonLoopback?: boolean;
+  onHistoryWritten?: (run: ProbeRun) => void | Promise<void>;
 };
 
 export type ProbeState = {
@@ -39,6 +45,8 @@ export type ProbeState = {
   rateLimit: LimiterSnapshot | null;
   aliases: Array<{ id: string; resolved: string }>;
   analysis: Record<string, ModelAnalysis>;
+  telemetry: { recent: TelemetryEntry[]; max: number };
+  ui: { proxyPublicUrl?: string; listenNonLoopback: boolean };
   scheduler: {
     enabled: boolean;
     intervalMs: number;
@@ -97,8 +105,13 @@ export class ProbeController {
       history,
       traffic: this.options.traffic?.() ?? null,
       rateLimit: this.options.rateLimit?.() ?? null,
+      telemetry: this.options.telemetry?.() ?? { recent: [], max: 0 },
       aliases: this.options.aliases?.() ?? [],
       analysis: MODEL_ANALYSIS,
+      ui: {
+        proxyPublicUrl: this.options.proxyPublicUrl,
+        listenNonLoopback: this.options.listenNonLoopback ?? false,
+      },
       scheduler: {
         enabled: this.started,
         intervalMs: this.options.intervalMs,
@@ -188,6 +201,8 @@ export class ProbeController {
       .then(async (run) => {
         try {
           await this.options.history.write(run);
+          await this.touchProbeSeen(run);
+          await this.options.onHistoryWritten?.(run);
           this.options.log?.({ event: "probe_run_finished", id: run.id, source, status: run.status, counts: run.counts });
         } finally {
           this.pause = null;
@@ -202,5 +217,14 @@ export class ProbeController {
 
     this.options.log?.({ event: "probe_run_started", id, source });
     return active;
+  }
+
+  private async touchProbeSeen(run: ProbeRun): Promise<void> {
+    const ids = [...new Set(run.results.map((r) => r.id))];
+    if (!ids.length) return;
+    const dir = this.options.historyDir;
+    const prev = await loadModelSeen(dir);
+    const merged = touchProbeModels(prev, ids, new Date().toISOString());
+    await saveModelSeen(dir, merged);
   }
 }

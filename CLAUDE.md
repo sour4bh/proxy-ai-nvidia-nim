@@ -67,12 +67,17 @@ Hono's typed JSON helper rejects 499. The client-aborted-in-queue path uses `new
 `POST /v1/messages` translates the Anthropic Messages API into an OpenAI Chat Completions request toward NIM and translates the response back. Reuses the shared `limiter` from `proxy.ts` — both surfaces share the same 40 RPM budget.
 
 Translation covers:
-- **Messages**: `tool_result` content blocks → `role: "tool"` messages; `tool_use` blocks → `tool_calls`; `system` string or block array → system message prepended.
+- **Messages**: string content plus `text`, `tool_use`, and `tool_result` content blocks; `tool_result` content blocks → `role: "tool"` messages; `tool_use` blocks → `tool_calls`; `system` string or text blocks → system message prepended. Unsupported content block types are ignored.
 - **Tools**: `input_schema` → `parameters`; wrapped in `{type: "function"}`.
-- **Tool choice**: `"any"` → `"required"`, `{type: "tool"}` → `{type: "function"}`.
+- **Tool choice**: `"any"` or `{type: "any"}` → `"required"`, `{type: "auto"}` / `{type: "none"}` → `"auto"` / `"none"`, `{type: "tool"}` → `{type: "function"}`.
+- **Stop sequences**: `stop_sequences` → OpenAI `stop`.
 - **Streaming**: requests OpenAI `stream_options.include_usage`, then converts OpenAI delta chunks → Anthropic SSE event sequence (`message_start`, `content_block_start/delta/stop`, `message_delta`, `message_stop`). Tool call argument deltas → `input_json_delta`; final upstream usage maps to Anthropic `input_tokens` / `output_tokens` in `message_delta`.
 - **Stop reasons**: `"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`, `"length"` → `"max_tokens"`.
 - **Errors**: returned in Anthropic error shape `{type: "error", error: {type, message}}` rather than OpenAI shape.
+
+The adapter is intentionally permissive rather than a full Anthropic API clone:
+unknown top-level fields and unsupported content block types are not rejected,
+but only the fields listed above are translated toward NIM.
 
 ### Probe dashboard (`probe/`)
 

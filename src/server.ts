@@ -11,10 +11,14 @@ import { ProbeHistory } from "./probe/history.ts";
 import { ProbeController } from "./probe/controller.ts";
 import { mountProbeRoutes } from "./probe/routes.ts";
 import { TrafficMonitor } from "./traffic.ts";
+import { TelemetryStore, setTelemetryStore } from "./telemetry.ts";
 
 const app = new Hono();
 const traffic = new TrafficMonitor();
 const probeHistory = new ProbeHistory(config.probeHistoryDir, config.probeHistoryLimit);
+const telemetry = new TelemetryStore(config.probeTelemetryMax, config.probeTelemetryEnabled);
+setTelemetryStore(telemetry);
+
 const probeController = new ProbeController({
   history: probeHistory,
   nimBaseUrl: config.nimBaseUrl,
@@ -35,6 +39,9 @@ const probeController = new ProbeController({
   traffic: () => traffic.snapshot(),
   rateLimit: () => limiter.snapshot(),
   aliases: aliasEntries,
+  telemetry: () => ({ recent: telemetry.recent(40), max: telemetry.maxEntries() }),
+  proxyPublicUrl: config.proxyPublicUrl,
+  listenNonLoopback: !config.isLoopbackHost,
   log,
 });
 
@@ -48,7 +55,13 @@ app.get("/health", (c) =>
   }),
 );
 
-mountProbeRoutes(app, probeController);
+mountProbeRoutes(app, {
+  controller: probeController,
+  traffic: () => traffic.snapshot(),
+  rateLimit: () => limiter.snapshot(),
+  telemetryStore: telemetry,
+  history: probeHistory,
+});
 
 app.get("/v1/models", listModels);
 app.post("/v1/chat/completions", (c) => traffic.track(() => chatCompletions(c)));
@@ -70,6 +83,7 @@ serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => 
     maxQueueWaitMs: config.maxQueueWaitMs,
     upstreamTimeoutMs: config.upstreamTimeoutMs,
     aliases: Object.fromEntries(aliasEntries().map((entry) => [entry.id, entry.resolved])),
+    ...(config.proxyPublicUrl ? { proxyPublicUrl: config.proxyPublicUrl } : {}),
   });
   probeController.startScheduler();
 });

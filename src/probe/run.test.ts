@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chatModelIds, probeOne } from "./run.ts";
+import { chatModelIds, probeOne, runProbe } from "./run.ts";
 
 const base = {
   nimBaseUrl: "https://example.test/v1",
@@ -89,4 +89,21 @@ test("probeOne classifies local limiter rejection as skipped", async () => {
   });
   assert.equal(result.category, "skipped");
   assert.equal(fetched, false);
+});
+
+test("runProbe fails instead of hanging when model discovery times out", async () => {
+  const run = await runProbe({
+    source: "cli",
+    nimBaseUrl: "https://example.test/v1",
+    nimApiKey: "test-key",
+    timeoutMs: 1,
+    concurrency: 1,
+    fetchImpl: async (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      }),
+  });
+
+  assert.equal(run.status, "failed");
+  assert.match(run.error ?? "", /\/v1\/models timed out after 1ms/);
 });

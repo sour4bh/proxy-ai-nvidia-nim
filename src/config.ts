@@ -19,6 +19,21 @@ function text(name: string, fallback: string): string {
   return v && v.trim() ? v : fallback;
 }
 
+function bool(name: string, defaultTrue: boolean): boolean {
+  const v = process.env[name];
+  if (v === undefined || v === "") return defaultTrue;
+  const l = v.trim().toLowerCase();
+  if (l === "0" || l === "false" || l === "no" || l === "off") return false;
+  if (l === "1" || l === "true" || l === "yes" || l === "on") return true;
+  return defaultTrue;
+}
+
+function optionalUrl(name: string): string | undefined {
+  const v = process.env[name];
+  const t = v?.trim();
+  return t ? t : undefined;
+}
+
 function parseAliases(): Record<string, string> {
   const args = process.argv.slice(2).filter((a) => a !== "--");
   const { values } = parseArgs({
@@ -53,4 +68,13 @@ export const config = {
   probeConcurrency: int("PROBE_CONCURRENCY", 3),
   probeClientQuietMs: int("PROBE_CLIENT_QUIET_MS", 30_000),
   aliases: parseAliases(),
+  probeTelemetryMax: int("PROBE_TELEMETRY_MAX", 300),
+  probeTelemetryEnabled: bool("PROBE_TELEMETRY_ENABLED", true),
+  proxyPublicUrl:
+    optionalUrl("PROXY_PUBLIC_URL") ??
+    optionalUrl("PROBE_PUBLIC_URL"),
+  isLoopbackHost: (() => {
+    const h = (process.env.PROXY_HOST ?? "127.0.0.1").trim().toLowerCase();
+    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+  })(),
 } as const;

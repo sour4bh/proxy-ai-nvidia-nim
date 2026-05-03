@@ -5,6 +5,7 @@ import { resolveModel } from "./aliases.ts";
 import { limiter } from "./proxy.ts";
 import { QueueTimeoutError, AbortedError } from "./limiter.ts";
 import { log, reqId } from "./log.ts";
+import { appendTelemetry, instrument, type RequestInstrument } from "./telemetry.ts";
 
 // --- Anthropic wire types ---
 
@@ -25,6 +26,13 @@ interface AnthropicTool {
   input_schema: Record<string, unknown>;
 }
 
+class InvalidAnthropicRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidAnthropicRequestError";
+  }
+}
+
 // --- Zod schema (permissive — validate only what we need) ---
 
 const requestSchema = z
@@ -33,6 +41,7 @@ const requestSchema = z
     messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.unknown() })),
     system: z.union([z.string(), z.array(z.unknown())]).optional(),
     max_tokens: z.number().optional(),
+    stop_sequences: z.array(z.string()).optional(),
     stream: z.boolean().optional(),
     tools: z.array(z.unknown()).optional(),
     tool_choice: z.unknown().optional(),
@@ -54,11 +63,50 @@ interface OAIMessage {
 
 // --- Request translation: Anthropic → OpenAI ---
 
+function hasType(value: unknown): value is { type: string } {
+  return Boolean(value && typeof value === "object" && typeof (value as { type?: unknown }).type === "string");
+}
+
+function isTextBlock(value: unknown): value is TextBlock {
+  return hasType(value) && value.type === "text" && typeof (value as { text?: unknown }).text === "string";
+}
+
+function isToolUseBlock(value: unknown): value is ToolUseBlock {
+  return (
+    hasType(value) &&
+    value.type === "tool_use" &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { name?: unknown }).name === "string"
+  );
+}
+
+function isToolResultBlock(value: unknown): value is ToolResultBlock {
+  return (
+    hasType(value) &&
+    value.type === "tool_result" &&
+    typeof (value as { tool_use_id?: unknown }).tool_use_id === "string" &&
+    (typeof (value as { content?: unknown }).content === "string" ||
+      Array.isArray((value as { content?: unknown }).content))
+  );
+}
+
+function normalizeMessages(messages: AnthropicRequest["messages"]): AnthropicMessage[] {
+  return messages.map((message, index) => {
+    const { content } = message;
+    if (typeof content !== "string" && !Array.isArray(content)) {
+      throw new InvalidAnthropicRequestError(
+        `messages.${index}.content must be a string or an array of content blocks.`,
+      );
+    }
+    return { role: message.role, content: content as string | ContentBlock[] };
+  });
+}
+
 function extractSystem(system: AnthropicRequest["system"]): string | undefined {
   if (!system) return undefined;
   if (typeof system === "string") return system;
-  return (system as { type: string; text?: string }[])
-    .filter((b) => b.type === "text" && b.text)
+  return system
+    .filter(isTextBlock)
     .map((b) => b.text!)
     .join("\n");
 }
@@ -75,16 +123,16 @@ function translateMessages(messages: AnthropicMessage[], system?: string): OAIMe
 
     if (role === "assistant") {
       const texts = content
-        .filter((b): b is TextBlock => b.type === "text")
+        .filter(isTextBlock)
         .map((b) => b.text)
         .join("");
-      const toolUses = content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+      const toolUses = content.filter(isToolUseBlock);
       const msg: OAIMessage = { role: "assistant", content: texts || null };
       if (toolUses.length > 0) {
         msg.tool_calls = toolUses.map((b) => ({
           id: b.id,
           type: "function" as const,
-          function: { name: b.name, arguments: JSON.stringify(b.input) },
+          function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
         }));
       }
       result.push(msg);
@@ -93,20 +141,20 @@ function translateMessages(messages: AnthropicMessage[], system?: string): OAIMe
 
     // role === "user": tool_results → "tool" messages, then text → "user" message
     for (const b of content) {
-      if (b.type === "tool_result") {
-        const tr = b as ToolResultBlock;
+      if (isToolResultBlock(b)) {
+        const tr = b;
         const trContent =
           typeof tr.content === "string"
             ? tr.content
             : tr.content
-                .filter((tb): tb is TextBlock => tb.type === "text")
+                .filter(isTextBlock)
                 .map((tb) => tb.text)
                 .join("");
         result.push({ role: "tool", tool_call_id: tr.tool_use_id, content: trContent });
       }
     }
     const userText = content
-      .filter((b): b is TextBlock => b.type === "text")
+      .filter(isTextBlock)
       .map((b) => b.text)
       .join("");
     if (userText.trim()) result.push({ role: "user", content: userText });
@@ -135,15 +183,20 @@ function translateTools(
 function translateToolChoice(tc: unknown): unknown {
   if (tc === "any") return "required";
   if (tc === "auto" || tc === "none") return tc;
-  if (tc && typeof tc === "object" && (tc as { type?: string }).type === "tool") {
-    return { type: "function", function: { name: (tc as { name: string }).name } };
+  if (tc && typeof tc === "object") {
+    const type = (tc as { type?: unknown }).type;
+    if (type === "any") return "required";
+    if (type === "auto" || type === "none") return type;
+    if (type === "tool" && typeof (tc as { name?: unknown }).name === "string") {
+      return { type: "function", function: { name: (tc as { name: string }).name } };
+    }
   }
   return undefined;
 }
 
 function buildOAIRequest(body: AnthropicRequest, resolvedModel: string): Record<string, unknown> {
   const messages = translateMessages(
-    body.messages as AnthropicMessage[],
+    normalizeMessages(body.messages),
     extractSystem(body.system),
   );
   const tools = translateTools(body.tools);
@@ -158,6 +211,7 @@ function buildOAIRequest(body: AnthropicRequest, resolvedModel: string): Record<
   if (body.stream === true) req.stream_options = { include_usage: true };
   if (body.temperature !== undefined) req.temperature = body.temperature;
   if (body.top_p !== undefined) req.top_p = body.top_p;
+  if (body.stop_sequences !== undefined) req.stop = body.stop_sequences;
   if (tools) req.tools = tools;
   if (toolChoice !== undefined) req.tool_choice = toolChoice;
   return req;
@@ -209,9 +263,19 @@ function translateStream(
   upstream: ReadableStream<Uint8Array>,
   requestedModel: string,
   msgId: string,
+  streamMeta: {
+    inst?: RequestInstrument;
+    reqId: string;
+    resolvedModel: string;
+    queueWaitMs: number;
+    start: number;
+  },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let canceled = false;
+  let catchError = false;
 
   function ev(event: string, data: unknown): Uint8Array {
     return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -219,7 +283,7 @@ function translateStream(
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      const reader = upstream.getReader();
+      reader = upstream.getReader();
       let buf = "";
       let started = false;
       let contentIdx = 0;
@@ -362,11 +426,53 @@ function translateStream(
         }));
         controller.enqueue(ev("message_stop", { type: "message_stop" }));
       } catch (e) {
-        log({ event: "anthropic_stream_error", error: (e as Error).message });
+        catchError = true;
+        if (!canceled) {
+          appendTelemetry(streamMeta.inst, {
+            reqId: streamMeta.reqId,
+            path: "/v1/messages",
+            requestedModel,
+            resolvedModel: streamMeta.resolvedModel,
+            stream: true,
+            queueWaitMs: streamMeta.queueWaitMs,
+            upstreamStatus: 200,
+            totalMs: Date.now() - streamMeta.start,
+            phase: "anthropic_stream_error",
+          });
+          log({ event: "anthropic_stream_error", error: (e as Error).message });
+        }
       } finally {
-        controller.close();
-        reader.releaseLock();
+        if (streamMeta.inst && !canceled && !catchError) {
+          appendTelemetry(streamMeta.inst, {
+            reqId: streamMeta.reqId,
+            path: "/v1/messages",
+            requestedModel,
+            resolvedModel: streamMeta.resolvedModel,
+            stream: true,
+            queueWaitMs: streamMeta.queueWaitMs,
+            upstreamStatus: 200,
+            totalMs: Date.now() - streamMeta.start,
+            phase: "stream_done",
+          });
+        }
+        if (!canceled) controller.close();
+        reader?.releaseLock();
       }
+    },
+    cancel(reason) {
+      canceled = true;
+      appendTelemetry(streamMeta.inst, {
+        reqId: streamMeta.reqId,
+        path: "/v1/messages",
+        requestedModel,
+        resolvedModel: streamMeta.resolvedModel,
+        stream: true,
+        queueWaitMs: streamMeta.queueWaitMs,
+        upstreamStatus: 200,
+        totalMs: Date.now() - streamMeta.start,
+        phase: "stream_canceled",
+      });
+      return reader?.cancel(reason) ?? upstream.cancel(reason);
     },
   });
 }
@@ -395,6 +501,7 @@ export async function messages(c: Context): Promise<Response> {
   const id = reqId();
   const start = Date.now();
   const signal = c.req.raw.signal;
+  const inst = instrument(c);
 
   let raw: unknown;
   try {
@@ -411,7 +518,15 @@ export async function messages(c: Context): Promise<Response> {
   const resolved = resolveModel(requested);
   const isStream = body.stream === true;
 
-  const oaiBody = buildOAIRequest(body, resolved);
+  let oaiBody: Record<string, unknown>;
+  try {
+    oaiBody = buildOAIRequest(body, resolved);
+  } catch (e) {
+    if (e instanceof InvalidAnthropicRequestError) {
+      return err("invalid_request_error", e.message, 400);
+    }
+    throw e;
+  }
 
   const queueEnter = Date.now();
   try {
@@ -421,10 +536,32 @@ export async function messages(c: Context): Promise<Response> {
     const queueWaitMs = Date.now() - queueEnter;
     if (e instanceof QueueTimeoutError) {
       log({ reqId: id, path: "/v1/messages", model: requested, status: 429, queueWaitMs, totalMs, reason: "queue_timeout" });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: isStream,
+        queueWaitMs,
+        upstreamStatus: 429,
+        totalMs,
+        phase: "queue_timeout",
+      });
       return err("rate_limit_error", `Request timed out in proxy queue after ${e.waitedMs}ms.`, 429, { "Retry-After": "5", "x-request-id": id });
     }
     if (e instanceof AbortedError) {
       log({ reqId: id, path: "/v1/messages", status: 499, queueWaitMs, totalMs, reason: "client_aborted_in_queue" });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: isStream,
+        queueWaitMs,
+        upstreamStatus: 499,
+        totalMs,
+        phase: "client_aborted_in_queue",
+      });
       return new Response(JSON.stringify({ type: "error", error: { type: "request_canceled", message: "Request aborted by client." } }), {
         status: 499,
         headers: { "Content-Type": "application/json" },
@@ -454,16 +591,49 @@ export async function messages(c: Context): Promise<Response> {
     const upstreamMs = Date.now() - upstreamStart;
     if (timeoutSignal.aborted) {
       log({ reqId: id, path: "/v1/messages", model: requested, status: 504, queueWaitMs, upstreamMs, totalMs, reason: "upstream_timeout" });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: isStream,
+        queueWaitMs,
+        upstreamStatus: 504,
+        totalMs,
+        phase: "upstream_timeout",
+      });
       return err("overloaded_error", `Upstream did not respond within ${config.upstreamTimeoutMs}ms.`, 504, { "x-request-id": id });
     }
     if (signal.aborted) {
       log({ reqId: id, path: "/v1/messages", status: 499, queueWaitMs, upstreamMs, totalMs, reason: "client_aborted_upstream" });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: isStream,
+        queueWaitMs,
+        upstreamStatus: 499,
+        totalMs,
+        phase: "client_aborted_upstream",
+      });
       return new Response(JSON.stringify({ type: "error", error: { type: "request_canceled", message: "Request aborted by client." } }), {
         status: 499,
         headers: { "Content-Type": "application/json" },
       });
     }
     log({ reqId: id, path: "/v1/messages", model: requested, status: 502, queueWaitMs, upstreamMs, totalMs, error: (e as Error).message });
+    appendTelemetry(inst, {
+      reqId: id,
+      path: "/v1/messages",
+      requestedModel: requested,
+      resolvedModel: resolved,
+      stream: isStream,
+      queueWaitMs,
+      upstreamStatus: 502,
+      totalMs,
+      phase: "upstream_fetch_error",
+    });
     return err("api_error", (e as Error).message, 502, { "x-request-id": id });
   }
 
@@ -481,6 +651,17 @@ export async function messages(c: Context): Promise<Response> {
     const rawText = await upstream.text();
     if (!upstream.ok) {
       log({ reqId: id, path: "/v1/messages", model: requested, resolvedModel: resolved, status: upstream.status, queueWaitMs, upstreamMs, totalMs });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: false,
+        queueWaitMs,
+        upstreamStatus: upstream.status,
+        totalMs,
+        phase: "upstream_error",
+      });
       const r = upstreamErrToAnthropic(rawText, upstream);
       if (upstream.status === 429) r.headers.set("Retry-After", upstream.headers.get("retry-after") ?? "5");
       r.headers.set("x-request-id", id);
@@ -490,10 +671,32 @@ export async function messages(c: Context): Promise<Response> {
       const oai = JSON.parse(rawText) as Record<string, unknown>;
       const anthropicResp = translateResponse(oai, requested);
       log({ reqId: id, path: "/v1/messages", model: requested, resolvedModel: resolved, status: 200, queueWaitMs, upstreamMs, totalMs, stream: false });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: false,
+        queueWaitMs,
+        upstreamStatus: 200,
+        totalMs,
+        phase: "completed",
+      });
       const r = new Response(JSON.stringify(anthropicResp), { status: 200, headers: { "Content-Type": "application/json", "x-request-id": id } });
       return r;
     } catch (e) {
       log({ reqId: id, path: "/v1/messages", model: requested, status: 502, error: (e as Error).message });
+      appendTelemetry(inst, {
+        reqId: id,
+        path: "/v1/messages",
+        requestedModel: requested,
+        resolvedModel: resolved,
+        stream: false,
+        queueWaitMs,
+        upstreamStatus: 502,
+        totalMs: Date.now() - start,
+        phase: "parse_error",
+      });
       return err("api_error", `Failed to parse upstream response: ${(e as Error).message}`, 502, { "x-request-id": id });
     }
   }
@@ -501,6 +704,17 @@ export async function messages(c: Context): Promise<Response> {
   if (upstream.status !== 200 || !upstream.body) {
     const rawText = await upstream.text();
     log({ reqId: id, path: "/v1/messages", model: requested, resolvedModel: resolved, status: upstream.status, queueWaitMs, upstreamMs, totalMs, stream: true, reason: "stream_request_rejected" });
+    appendTelemetry(inst, {
+      reqId: id,
+      path: "/v1/messages",
+      requestedModel: requested,
+      resolvedModel: resolved,
+      stream: true,
+      queueWaitMs,
+      upstreamStatus: upstream.status,
+      totalMs,
+      phase: "stream_request_rejected",
+    });
     const r = upstreamErrToAnthropic(rawText, upstream);
     if (upstream.status === 429) r.headers.set("Retry-After", upstream.headers.get("retry-after") ?? "5");
     r.headers.set("x-request-id", id);
@@ -508,8 +722,19 @@ export async function messages(c: Context): Promise<Response> {
   }
 
   log({ reqId: id, path: "/v1/messages", model: requested, resolvedModel: resolved, status: 200, queueWaitMs, upstreamMs, totalMs, stream: true });
+  appendTelemetry(inst, {
+    reqId: id,
+    path: "/v1/messages",
+    requestedModel: requested,
+    resolvedModel: resolved,
+    stream: true,
+    queueWaitMs,
+    upstreamStatus: 200,
+    totalMs: upstreamMs,
+    phase: "stream_open",
+  });
   const msgId = `msg_${id}`;
-  return new Response(translateStream(upstream.body, requested, msgId), {
+  return new Response(translateStream(upstream.body, requested, msgId, { inst, reqId: id, resolvedModel: resolved, queueWaitMs, start }), {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream",

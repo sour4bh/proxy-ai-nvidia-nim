@@ -93,12 +93,19 @@ export async function probeOne(id: string, options: ProbeOneOptions): Promise<Pr
 
 async function fetchModelIds(options: ProbeRunnerOptions): Promise<{ ids: string[]; skipped: number }> {
   const fetcher = options.fetchImpl ?? fetch;
-  const r = await fetcher(`${options.nimBaseUrl}/models`, {
-    headers: { Authorization: `Bearer ${options.nimApiKey}` },
-  });
-  if (!r.ok) throw new Error(`/v1/models returned ${r.status}`);
-  const list = (await r.json()) as { data?: Array<{ id: string }> };
-  return chatModelIds(Array.isArray(list.data) ? list.data : []);
+  const signal = AbortSignal.timeout(options.timeoutMs);
+  try {
+    const r = await fetcher(`${options.nimBaseUrl}/models`, {
+      headers: { Authorization: `Bearer ${options.nimApiKey}` },
+      signal,
+    });
+    if (!r.ok) throw new Error(`/v1/models returned ${r.status}`);
+    const list = (await r.json()) as { data?: Array<{ id: string }> };
+    return chatModelIds(Array.isArray(list.data) ? list.data : []);
+  } catch (e) {
+    if (signal.aborted) throw new Error(`/v1/models timed out after ${options.timeoutMs}ms`);
+    throw e;
+  }
 }
 
 export async function runProbe(options: ProbeRunnerOptions): Promise<ProbeRun> {

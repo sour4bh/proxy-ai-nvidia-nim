@@ -348,7 +348,15 @@ Request translation includes:
 | user `tool_result` blocks | `role: "tool"` messages. |
 | tool `input_schema` | function `parameters`. |
 | `tool_choice: "any"` | `tool_choice: "required"`. |
+| `tool_choice: { "type": "any" }` | `tool_choice: "required"`. |
+| `tool_choice: { "type": "auto" }` / `{ "type": "none" }` | `tool_choice: "auto"` / `"none"`. |
 | `{ "type": "tool", "name": ... }` | OpenAI function tool choice. |
+| `stop_sequences` | `stop`. |
+
+The adapter intentionally supports a practical subset of Anthropic Messages. It
+translates string content plus `text`, `tool_use`, and `tool_result` content
+blocks. Other top-level fields and unsupported content block types remain
+permissive and are not forwarded unless listed above.
 
 Response translation includes:
 
@@ -588,8 +596,11 @@ pnpm start --alias claude-sonnet=meta/llama-3.3-70b-instruct
 - Run `pnpm typecheck` and `pnpm test` before publishing changes.
 
 The probe subsystem has focused tests for result classification, file-history
-retention, and overlapping manual run rejection. Other runtime behavior is
-verified with typecheck and smoke scripts.
+retention, overlapping manual run rejection, model-list timeout handling, and
+dashboard category rendering. The Anthropic adapter has focused tests for
+supported control translation, malformed content handling, and stream
+cancellation. Other runtime behavior is verified with typecheck and smoke
+scripts.
 
 ## Contributing
 
