@@ -1314,7 +1314,7 @@ export function probePage(boot: ProbePageBoot = {}): string {
       const rows = [];
       const pub = BOOT.proxyPublicUrl || state?.ui?.proxyPublicUrl;
       if (pub) {
-        const base = String(pub).replace(/\/+$/, "");
+        const base = String(pub).replace(/\\/+$/, "");
         const probeUrl = base + "/probe";
         rows.push(
           '<div class="banner-public"><span>Public dashboard URL <span class="muted">(Tailscale / LAN)</span></span>'
